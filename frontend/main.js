@@ -17,8 +17,8 @@ function handleRouting() {
 
         // Pre-fill Assigned By name for new assets
         const assignedByInput = document.getElementById('assignedBy');
-        if (assignedByInput && !assignedByInput.value) {
-            assignedByInput.value = user.name;
+        if (assignedByInput) {
+            assignedByInput.value = user.username;
         }
 
         fetch(API_URL + '/roles')
@@ -473,10 +473,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const roleEl = document.getElementById('user-role');
         const avatarEl = document.getElementById('user-avatar');
 
-        if (nameEl && roleEl && avatarEl) {
-            nameEl.textContent = user.name;
+        if (nameEl) {
+            nameEl.textContent = user.username;
+        }
+        if (roleEl) {
             roleEl.textContent = user.role;
-            const nameParam = encodeURIComponent(user.name);
+        }
+        if (avatarEl) {
+            const nameParam = encodeURIComponent(user.username);
             avatarEl.src = `https://ui-avatars.com/api/?name=${nameParam}&background=A855F7&color=fff`;
         }
 
@@ -485,7 +489,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const profileEmailInput = document.getElementById('profile-email');
         const profileRoleInput = document.getElementById('profile-role');
 
-        if (profileNameInput) profileNameInput.value = user.name || '';
+        if (profileNameInput) profileNameInput.value = user.username || '';
         if (profileEmailInput) profileEmailInput.value = user.email || '';
         if (profileRoleInput) profileRoleInput.value = user.role || '';
 
@@ -944,7 +948,7 @@ document.getElementById('asset-form').addEventListener('submit', async (e) => {
             if (userStr) {
                 const user = JSON.parse(userStr);
                 const assignedByInput = document.getElementById('assignedBy');
-                if (assignedByInput) assignedByInput.value = user.name;
+                if (assignedByInput) assignedByInput.value = user.username;
             }
 
             window.location.hash = '#index';
@@ -1592,7 +1596,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (intRegForm) {
         intRegForm.addEventListener('submit', async (e) => {
             e.preventDefault();
-            const name = document.getElementById('int-reg-name').value;
             const username = document.getElementById('int-reg-username').value;
             const role = document.getElementById('int-reg-role').value;
             const password = document.getElementById('int-reg-password').value;
@@ -1616,7 +1619,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         'Content-Type': 'application/json',
                         'Authorization': 'Bearer ' + token
                     },
-                    body: JSON.stringify({ name, username, role, password })
+                    body: JSON.stringify({ username, role, password })
                 });
 
                 const data = await response.json();
@@ -1698,8 +1701,7 @@ window.editRole = function (roleName, trElement) {
                         <div style="display: flex; align-items: center; gap: 10px; opacity: ${isBlocked ? '0.6' : '1'};">
                             <i class="fa-solid fa-user-circle" style="color: #94a3b8; font-size: 1.5rem;"></i>
                             <div>
-                                <div style="font-weight: 600; color: #334155; font-size: 0.95rem;">${u.name} ${isBlocked ? '<span style="color:#ef4444; font-size:0.75rem; margin-left:5px;"><i class="fa-solid fa-lock"></i> Blocked</span>' : ''}</div>
-                                <div style="color: #64748b; font-size: 0.8rem;">${u.email}</div>
+                                <div style="font-weight: 600; color: #334155; font-size: 0.95rem;">${u.username || 'User'} ${isBlocked ? '<span style="color:#ef4444; font-size:0.75rem; margin-left:5px;"><i class="fa-solid fa-lock"></i> Blocked</span>' : ''}</div>
                             </div>
                         </div>
                         <div>
@@ -2103,11 +2105,11 @@ async function openProfileModal() {
             headers: { 'Authorization': 'Bearer ' + token }
         });
         if (response.ok) {
-            const data = await response.json();
-            document.getElementById('prof-name').value = data.name || '';
-            document.getElementById('prof-email').value = data.email || '';
-            document.getElementById('prof-phone').value = data.phone || '';
-            document.getElementById('prof-empId').value = data.employeeId || '';
+            response.json().then(data => {
+                document.getElementById('prof-username').value = data.username || '';
+                document.getElementById('prof-phone').value = data.phone || '';
+                document.getElementById('prof-empId').value = data.employeeId || '';
+            });
         }
     } catch (err) {
         console.error('Error fetching profile:', err);
@@ -2128,14 +2130,13 @@ function closeProfileModal() {
 
 async function submitProfileForm(e) {
     e.preventDefault();
-    const btn = e.target.querySelector('button[type="submit"]');
+    const btn = document.getElementById('save-prof-btn');
     const originalText = btn.innerHTML;
     btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving...';
     btn.disabled = true;
 
-    const profileData = {
-        name: document.getElementById('prof-name').value.trim(),
-        email: document.getElementById('prof-email').value.trim(),
+    const updateData = {
+        username: document.getElementById('prof-username').value.trim(),
         phone: document.getElementById('prof-phone').value.trim(),
         employeeId: document.getElementById('prof-empId').value.trim()
     };
@@ -2148,7 +2149,7 @@ async function submitProfileForm(e) {
                 'Content-Type': 'application/json',
                 'Authorization': 'Bearer ' + token
             },
-            body: JSON.stringify(profileData)
+            body: JSON.stringify(updateData)
         });
 
         if (response.ok) {
@@ -2158,15 +2159,14 @@ async function submitProfileForm(e) {
             // Update UI headers
             const nameEl = document.getElementById('user-name');
             const avatarEl = document.getElementById('user-avatar');
-            if (nameEl) nameEl.textContent = data.name;
-            if (avatarEl) avatarEl.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(data.name)}&background=A855F7&color=fff`;
+            if (nameEl) nameEl.textContent = data.username;
+            if (avatarEl) avatarEl.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(data.username)}&background=A855F7&color=fff`;
 
-            // Update localStorage to keep it in sync if user refreshes
-            let lsUser = localStorage.getItem('user');
-            if (lsUser) {
-                lsUser = JSON.parse(lsUser);
-                lsUser.name = data.name;
-                lsUser.email = data.email;
+            // Update localStorage user obj
+            const userStr = localStorage.getItem('user');
+            if (userStr) {
+                const lsUser = JSON.parse(userStr);
+                lsUser.username = data.username;
                 localStorage.setItem('user', JSON.stringify(lsUser));
             }
 

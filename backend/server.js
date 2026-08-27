@@ -27,8 +27,6 @@ mongoose.connect(MONGODB_URI)
       if (roleCount === 0) {
         const defaultRoles = [
           { name: 'Super Admin', permissions: ['*'] },
-          { name: 'User 1', permissions: ['index.html', 'assets.html', 'returns.html', 'warranty.html', 'reports.html'] },
-          { name: 'User 2', permissions: ['index.html', 'allocations.html', 'reports.html'] },
           { name: 'Employee', permissions: ['index.html'] }
         ];
         await Role.insertMany(defaultRoles);
@@ -41,7 +39,6 @@ mongoose.connect(MONGODB_URI)
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash('*VPEL@26#', salt);
         await User.create({
-          name: 'Super Administrator',
           username: 'admin',
           password: hashedPassword,
           role: 'Super Admin'

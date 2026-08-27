@@ -1378,10 +1378,6 @@
 
                             <form id="internal-register-form" style="width: 100%; max-width: 600px;">
                                 <div class="form-group">
-                                    <label>Full Name *</label>
-                                    <input type="text" id="int-reg-name" required placeholder="John Doe" class="form-control">
-                                </div>
-                                <div class="form-group">
                                     <label>Username *</label>
                                     <input type="text" id="int-reg-username" required placeholder="Enter username (e.g., admin)" class="form-control">
                                 </div>
@@ -1390,8 +1386,6 @@
                                     <select id="int-reg-role" required class="form-control">
                                         <option value="" disabled selected>Select user role</option>
                                         <option value="Super Admin">Super Admin</option>
-                                        <option value="User 1">User 1</option>
-                                        <option value="User 2">User 2</option>
                                         <option value="Employee">Employee</option>
                                     </select>
                                 </div>
@@ -1570,23 +1564,10 @@
                 <div class="form-grid"
                     style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 30px;">
                     <div class="form-group" style="display: flex; flex-direction: column; gap: 10px;">
-                        <label style="font-weight: 600; font-size: 0.9rem; color: #334155;"><i
-                                class="fa-regular fa-id-card" style="color: var(--red-primary); margin-right: 5px;"></i>
-                            Full Name *</label>
-                        <input type="text" id="prof-name" required
-                            style="padding: 12px 16px; border: 1.5px solid #e2e8f0; border-radius: 10px; font-family: 'Inter', sans-serif; font-size: 1rem; transition: border-color 0.2s; outline: none;"
-                            onfocus="this.style.borderColor='var(--red-primary)'"
-                            onblur="this.style.borderColor='#e2e8f0'">
-                    </div>
-
-                    <div class="form-group" style="display: flex; flex-direction: column; gap: 10px;">
-                        <label style="font-weight: 600; font-size: 0.9rem; color: #334155;"><i
-                                class="fa-regular fa-envelope"
-                                style="color: var(--red-primary); margin-right: 5px;"></i> Email Address *</label>
-                        <input type="email" id="prof-email" required
-                            style="padding: 12px 16px; border: 1.5px solid #e2e8f0; border-radius: 10px; font-family: 'Inter', sans-serif; font-size: 1rem; transition: border-color 0.2s; outline: none;"
-                            onfocus="this.style.borderColor='var(--red-primary)'"
-                            onblur="this.style.borderColor='#e2e8f0'">
+                                    <label style="font-size: 0.85rem; font-weight: 600; color: #475569; margin-bottom: 6px; display:block;">Username *</label>
+                                    <input type="text" id="prof-username" required
+                                        style="width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 10px; font-size: 0.95rem; outline:none; transition: all 0.2s; background: rgba(241,245,249,0.8); color: #64748b;"
+                                        readonly>
                     </div>
 
                     <div class="form-group" style="display: flex; flex-direction: column; gap: 10px;">

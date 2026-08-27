@@ -15,10 +15,10 @@ router.post('/register', auth, async (req, res) => {
       return res.status(403).json({ message: 'Only Super Admin can register new users.' });
     }
 
-    const { name, username, password, role } = req.body;
+    const { username, password, role } = req.body;
 
     // Validate role
-    const validRoles = ['Super Admin', 'User 1', 'User 2', 'Employee'];
+    const validRoles = ['Super Admin', 'Employee'];
     if (!validRoles.includes(role)) {
       return res.status(400).json({ message: 'Invalid role selected.' });
     }
@@ -31,7 +31,6 @@ router.post('/register', auth, async (req, res) => {
 
     // Create new user instance
     user = new User({
-      name,
       username,
       password,
       role
@@ -47,7 +46,6 @@ router.post('/register', auth, async (req, res) => {
     const payload = {
       user: {
         id: user.id,
-        name: user.name,
         username: user.username,
         role: user.role
       }
@@ -96,7 +94,6 @@ router.post('/login', async (req, res) => {
     const payload = {
       user: {
         id: user.id,
-        name: user.name,
         username: user.username,
         role: user.role
       }

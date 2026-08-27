@@ -1,11 +1,7 @@
 const mongoose = require('mongoose');
 
 const userSchema = new mongoose.Schema({
-  name: {
-    type: String,
-    required: true,
-    trim: true
-  },
+// Name removed
   username: {
     type: String,
     required: true,
@@ -19,7 +15,7 @@ const userSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ['Super Admin', 'User 1', 'User 2'],
+    enum: ['Super Admin', 'Employee'],
     required: true
   },
   isBlocked: {

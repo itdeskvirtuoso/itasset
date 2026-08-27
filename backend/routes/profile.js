@@ -13,8 +13,7 @@ router.get('/', auth, async (req, res) => {
       const salt = await bcrypt.genSalt(10);
       const hashedPassword = await bcrypt.hash('password123', salt);
       user = new User({
-        name: 'System Admin',
-        email: 'admin@example.com',
+        username: 'admin',
         password: hashedPassword,
         role: 'Super Admin',
         phone: '',
@@ -26,8 +25,7 @@ router.get('/', auth, async (req, res) => {
     // Don't send the password back
     const userProfile = {
       _id: user._id,
-      name: user.name,
-      email: user.email,
+      username: user.username,
       role: user.role,
       phone: user.phone || '',
       employeeId: user.employeeId || ''
@@ -47,10 +45,9 @@ router.put('/', auth, async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
     
-    const { name, email, phone, employeeId } = req.body;
+    const { username, phone, employeeId } = req.body;
     
-    user.name = name || user.name;
-    user.email = email || user.email;
+    user.username = username || user.username;
     user.phone = phone !== undefined ? phone : user.phone;
     user.employeeId = employeeId !== undefined ? employeeId : user.employeeId;
     
@@ -58,8 +55,7 @@ router.put('/', auth, async (req, res) => {
     
     res.json({
       _id: updatedUser._id,
-      name: updatedUser.name,
-      email: updatedUser.email,
+      username: updatedUser.username,
       role: updatedUser.role,
       phone: updatedUser.phone,
       employeeId: updatedUser.employeeId
