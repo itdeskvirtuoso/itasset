@@ -867,6 +867,17 @@ function renderTrendChart(trendData) {
                     fill: false,
                     pointRadius: 0,
                     pointHoverRadius: 6
+                },
+                {
+                    label: 'Returned',
+                    data: trendData.returned,
+                    borderColor: '#F59E0B', // amber/orange
+                    backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                    borderWidth: 3,
+                    tension: 0.4,
+                    fill: true,
+                    pointRadius: 0,
+                    pointHoverRadius: 6
                 }
             ]
         },
