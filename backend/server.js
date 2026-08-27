@@ -33,8 +33,23 @@ mongoose.connect(MONGODB_URI)
         ];
         await Role.insertMany(defaultRoles);
       }
+
+      const User = require('./models/User');
+      const bcrypt = require('bcryptjs');
+      const superadmin = await User.findOne({ email: 'superadmin@gmail.com' });
+      if (!superadmin) {
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash('vpel@26', salt);
+        await User.create({
+          name: 'Super Administrator',
+          email: 'superadmin@gmail.com',
+          password: hashedPassword,
+          role: 'Super Admin'
+        });
+        console.log('✅ Super Admin account seeded.');
+      }
     } catch (err) {
-      console.error('Error seeding roles:', err);
+      console.error('Error seeding data:', err);
     }
   })
   .catch((err) => console.error('❌ MongoDB connection error:', err));

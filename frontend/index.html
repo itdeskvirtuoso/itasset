@@ -1363,10 +1363,51 @@
                                     </tbody>
                                 </table>
                             </div>
-
-
                         </div>
                     </div>
+
+                    <!-- User Management Section -->
+                    <div id="user-management-section" class="kpi-grid" style="grid-template-columns: 1fr; margin-top: 30px; display: none;">
+                        <div class="kpi-card glass" style="flex-direction: column; align-items: flex-start;">
+                            <h3 style="margin-bottom: 20px; border-bottom: 1px solid var(--border); padding-bottom: 10px; width: 100%;">
+                                User Management (Create New User)
+                            </h3>
+                            <p style="color: var(--text-muted); font-size: 0.95rem; margin-bottom: 24px;">
+                                Only Super Admins can register new users in the system.
+                            </p>
+
+                            <form id="internal-register-form" style="width: 100%; max-width: 600px;">
+                                <div class="form-group">
+                                    <label>Full Name *</label>
+                                    <input type="text" id="int-reg-name" required placeholder="John Doe" class="form-control">
+                                </div>
+                                <div class="form-group">
+                                    <label>Email Address *</label>
+                                    <input type="email" id="int-reg-email" required placeholder="john@example.com" class="form-control">
+                                </div>
+                                <div class="form-group">
+                                    <label>Role *</label>
+                                    <select id="int-reg-role" required class="form-control">
+                                        <option value="" disabled selected>Select user role</option>
+                                        <option value="Super Admin">Super Admin</option>
+                                        <option value="User 1">User 1</option>
+                                        <option value="User 2">User 2</option>
+                                        <option value="Employee">Employee</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Password *</label>
+                                    <input type="password" id="int-reg-password" required placeholder="Create a password (min 6 chars)" class="form-control">
+                                </div>
+                                <div class="form-actions" style="margin-top: 20px;">
+                                    <button type="submit" class="primary-btn" id="int-reg-submit">
+                                        <i class="fa-solid fa-user-plus"></i> Create User
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+
                 </div>
 
         </main>

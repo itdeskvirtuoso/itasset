@@ -4,15 +4,21 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
+const auth = require('../middleware/auth');
+
 // @route   POST /api/auth/register
-// @desc    Register a new user
-// @access  Public
-router.post('/register', async (req, res) => {
+// @desc    Register a new user (Only Super Admin)
+// @access  Private (Super Admin only)
+router.post('/register', auth, async (req, res) => {
   try {
+    if (req.user.role !== 'Super Admin') {
+      return res.status(403).json({ message: 'Only Super Admin can register new users.' });
+    }
+
     const { name, email, password, role } = req.body;
 
     // Validate role
-    const validRoles = ['Super Admin', 'User 1', 'User 2'];
+    const validRoles = ['Super Admin', 'User 1', 'User 2', 'Employee'];
     if (!validRoles.includes(role)) {
       return res.status(400).json({ message: 'Invalid role selected.' });
     }

@@ -11,29 +11,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 window.switchTab = function (tab) {
-    const loginForm = document.getElementById('login-form');
-    const registerForm = document.getElementById('register-form');
-    const btnLogin = document.getElementById('btn-login');
-    const btnRegister = document.getElementById('btn-register');
-    const subtitle = document.getElementById('auth-subtitle');
-    const alertMsg = document.getElementById('alert-message');
-
-    if (!loginForm) return;
-    alertMsg.style.display = 'none';
-
-    if (tab === 'login') {
-        loginForm.style.display = 'block';
-        registerForm.style.display = 'none';
-        btnLogin.classList.add('active');
-        btnRegister.classList.remove('active');
-        subtitle.textContent = 'Sign in to continue';
-    } else {
-        loginForm.style.display = 'none';
-        registerForm.style.display = 'block';
-        btnLogin.classList.remove('active');
-        btnRegister.classList.add('active');
-        subtitle.textContent = 'Create a new account';
-    }
+    // Left empty or removed, tabs no longer exist
 }
 
 window.togglePasswordVisibility = function (inputId, iconElement) {
@@ -114,60 +92,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    const registerForm = document.getElementById('register-form');
-    if (registerForm) {
-        registerForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const name = document.getElementById('register-name').value;
-            const email = document.getElementById('register-email').value;
-            const role = document.getElementById('register-role').value;
-            const password = document.getElementById('register-password').value;
-            const btn = document.getElementById('register-submit');
-
-            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-            if (!emailRegex.test(email)) {
-                window.showAlert('Please enter a valid email address.');
-                return;
-            }
-            if (password.length < 6) {
-                window.showAlert('Password must be at least 6 characters.');
-                return;
-            }
-            if (!role) {
-                window.showAlert('Please select a role.');
-                return;
-            }
-
-            btn.disabled = true;
-            btn.innerHTML = '<span>Registering...</span> <i class="fa-solid fa-spinner fa-spin"></i>';
-
-            try {
-                const response = await fetch(API_URL + '/auth/register', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name, email, role, password })
-                });
-
-                const data = await response.json();
-
-                if (response.ok) {
-                    window.showAlert('Registration successful! Logging in...', 'success');
-                    localStorage.setItem('token', data.token);
-                    localStorage.setItem('user', JSON.stringify(data.user));
-                    setTimeout(() => {
-                        window.location.href = 'index.html';
-                    }, 1000);
-                } else {
-                    window.showAlert(data.message || 'Registration failed');
-                }
-            } catch (err) {
-                window.showAlert('Cannot connect to server.');
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = '<span>Register Account</span> <i class="fa-solid fa-arrow-right"></i>';
-            }
-        });
-    }
+    // Registration logic moved to authenticated settings panel
 });
 
 // --- Interactive Ambient Background Logic ---

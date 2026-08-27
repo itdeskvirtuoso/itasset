@@ -1570,7 +1570,72 @@ var rolesCache = {};
 
 function fetchSettingsData() {
     fetchRoles();
+    
+    // User Management visibility
+    const userStr = localStorage.getItem('user');
+    if (userStr) {
+        const user = JSON.parse(userStr);
+        const userMgmtSection = document.getElementById('user-management-section');
+        if (userMgmtSection) {
+            if (user.role === 'Super Admin') {
+                userMgmtSection.style.display = 'grid';
+            } else {
+                userMgmtSection.style.display = 'none';
+            }
+        }
+    }
 }
+
+// User Management Form Submission
+document.addEventListener('DOMContentLoaded', () => {
+    const intRegForm = document.getElementById('internal-register-form');
+    if (intRegForm) {
+        intRegForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const name = document.getElementById('int-reg-name').value;
+            const email = document.getElementById('int-reg-email').value;
+            const role = document.getElementById('int-reg-role').value;
+            const password = document.getElementById('int-reg-password').value;
+            const btn = document.getElementById('int-reg-submit');
+
+            if (password.length < 6) {
+                window.showAlert('Password must be at least 6 characters.', 'error');
+                return;
+            }
+
+            const btnOriginalHtml = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Creating...';
+
+            const token = localStorage.getItem('token');
+
+            try {
+                const response = await fetch(API_URL + '/auth/register', {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token
+                    },
+                    body: JSON.stringify({ name, email, role, password })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    window.showAlert('User created successfully!', 'success');
+                    intRegForm.reset();
+                } else {
+                    window.showAlert(data.message || 'Registration failed', 'error');
+                }
+            } catch (err) {
+                window.showAlert('Cannot connect to server.', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = btnOriginalHtml;
+            }
+        });
+    }
+});
 
 function fetchRoles() {
     fetch(API_URL + '/roles')

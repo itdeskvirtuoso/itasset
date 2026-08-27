@@ -37,8 +37,7 @@
 
             <!-- Toggle Buttons -->
             <div class="auth-toggle">
-                <button class="toggle-btn active" id="btn-login" onclick="switchTab('login')">Login</button>
-                <button class="toggle-btn" id="btn-register" onclick="switchTab('register')">Register</button>
+                <button class="toggle-btn active" id="btn-login" style="width: 100%; border-radius: 8px;">Login</button>
             </div>
 
             <div id="alert-message" class="alert-message" style="display: none;"></div>
@@ -67,52 +66,6 @@
                 </button>
             </form>
 
-            <!-- Register Form -->
-            <form id="register-form" class="auth-form" style="display: none;">
-                <div class="form-group">
-                    <label for="register-name">Full Name</label>
-                    <div class="input-with-icon">
-                        <i class="fa-regular fa-user"></i>
-                        <input type="text" id="register-name" placeholder="John Doe" required>
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label for="register-email">Email Address</label>
-                    <div class="input-with-icon">
-                        <i class="fa-regular fa-envelope"></i>
-                        <input type="email" id="register-email" placeholder="john@example.com" required
-                            onkeyup="validateEmailRealtime(this.value)">
-                        <i class="fa-solid fa-check validation-icon" id="email-valid-icon"
-                            style="display:none; color: var(--success);"></i>
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label for="register-role">Role</label>
-                    <div class="input-with-icon">
-                        <i class="fa-solid fa-user-shield"></i>
-                        <select id="register-role" required>
-                            <option value="" disabled selected>Select your role</option>
-                            <option value="Super Admin">Super Admin</option>
-                            <option value="User 1">User 1</option>
-                            <option value="User 2">User 2</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label for="register-password">Password</label>
-                    <div class="input-with-icon">
-                        <i class="fa-solid fa-lock"></i>
-                        <input type="password" id="register-password" placeholder="Create a password (min 6 chars)"
-                            required onkeyup="validatePasswordRealtime(this.value)">
-                        <i class="fa-regular fa-eye-slash toggle-password"
-                            onclick="togglePasswordVisibility('register-password', this)"></i>
-                    </div>
-                </div>
-                <button type="submit" class="primary-btn full-width" id="register-submit">
-                    <span>Register Account</span>
-                    <i class="fa-solid fa-arrow-right"></i>
-                </button>
-            </form>
         </div>
     </div>
 
