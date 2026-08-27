@@ -29,7 +29,7 @@ const upload = multer({
 });
 
 // Sheets to skip during import
-const SKIP_SHEETS = ['summary', 'o365 user list', 'o365', 'user list', 'sheet1'];
+const SKIP_SHEETS = ['summary', 'o365 user list', 'o365', 'user list'];
 
 // Flexible column name mapper — maps various Excel header names to schema fields
 function findColumnValue(row, possibleNames) {
@@ -45,9 +45,24 @@ function findColumnValue(row, possibleNames) {
 function mapRowToAsset(row, sheetDeviceType) {
   const srNo = findColumnValue(row, ['srno', 'slno', 'sno']) || '';
   const assetTagNumber = findColumnValue(row, ['assettag', 'tagno', 'tagnumber', 'assetno']) || '';
-  const serialNumber = findColumnValue(row, ['serialnumber', 'serialno', 'assetsrno', 'assetserial', 'key', 'licensekey']) || '';
-  const make = findColumnValue(row, ['make', 'brand', 'manufacturer']) || '';
-  const model = findColumnValue(row, ['model', 'modelno', 'modelnumber', 'softwarename', 'software']) || '';
+  const serialNumber = findColumnValue(row, ['serialnumber', 'serialno', 'assetsrno', 'assetserial', 'key', 'licensekey', 'serialkey']) || '';
+  let make = findColumnValue(row, ['make', 'brand', 'manufacturer']) || '';
+  let model = findColumnValue(row, ['model', 'modelno', 'modelnumber', 'softwarename', 'software']) || '';
+
+  // Handle combined 'Make & Model' column
+  if (!make && !model) {
+    const combined = findColumnValue(row, ['makemodel', 'makeandmodel']) || '';
+    if (combined) {
+      // Try to split on common separators: first word as make, rest as model
+      const parts = String(combined).trim().split(/\s+/);
+      if (parts.length >= 2) {
+        make = parts[0];
+        model = parts.slice(1).join(' ');
+      } else {
+        model = String(combined).trim();
+      }
+    }
+  }
   const processor = findColumnValue(row, ['processor', 'cpu']) || '';
   const generation = findColumnValue(row, ['generation', 'gen']) || '';
   const ram = findColumnValue(row, ['ram', 'memory']) || '';
@@ -275,7 +290,7 @@ router.post('/import', upload.single('file'), async (req, res) => {
         const asset = mapRowToAsset(row, sheetDeviceType);
 
         // Auto-generate missing asset tags (required by DB schema)
-        if (!asset.assetTagNumber || asset.assetTagNumber === 'undefined' || asset.assetTagNumber === '') {
+        if (!asset.assetTagNumber || asset.assetTagNumber === 'undefined' || asset.assetTagNumber === '' || asset.assetTagNumber.toUpperCase() === 'NA' || asset.assetTagNumber === 'N/A' || asset.assetTagNumber === '-') {
           if (asset.serialNumber && asset.serialNumber !== 'N/A') {
             asset.assetTagNumber = asset.serialNumber; // Use serial or product key as tag
           } else if (asset.make || asset.model || asset.assignedToName) {
