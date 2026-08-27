@@ -32,7 +32,7 @@ function handleRouting() {
                 if (hash === '#index') pageName = 'index.html';
 
                 // Check if they are allowed to access this route
-                if (!allowedPages.includes(pageName)) {
+                if (!allowedPages.includes(pageName) && !allowedPages.includes('*')) {
                     showToast(`Access Denied! As a ${user.role}, you cannot view this.`, 'error');
                     window.location.hash = '#index';
                     return;
