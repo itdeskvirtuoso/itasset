@@ -16,7 +16,7 @@ router.get('/', async (req, res) => {
     const roles = await Role.find();
     
     const rolesWithCounts = await Promise.all(roles.map(async (role) => {
-      const usersInRole = await User.find({ role: role.name }, 'name email isBlocked');
+      const usersInRole = await User.find({ role: role.name }, 'username isBlocked');
       return {
         _id: role._id,
         name: role.name,

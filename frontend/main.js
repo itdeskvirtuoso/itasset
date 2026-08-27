@@ -44,7 +44,7 @@ function handleRouting() {
                     if (href) {
                         let linkPage = href.substring(1) + '.html';
                         if (href === '#index') linkPage = 'index.html';
-                        if (!allowedPages.includes(linkPage)) {
+                        if (!allowedPages.includes(linkPage) && !allowedPages.includes('*')) {
                             link.parentElement.style.display = 'none';
                         } else {
                             link.parentElement.style.display = 'block';
