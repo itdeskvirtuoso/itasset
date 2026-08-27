@@ -21,7 +21,7 @@ function handleRouting() {
             assignedByInput.value = user.name;
         }
 
-        fetch('http://localhost:5000/api/roles')
+        fetch(API_URL + '/roles')
             .then(res => res.json())
             .then(roles => {
                 const roleObj = roles.find(r => r.name === user.role);
@@ -211,7 +211,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         debounceTimer = setTimeout(async () => {
             try {
-                const response = await fetch('http://localhost:5000/api/assets/search' + window.getOwnershipQuery(true) + (window.currentOwnershipFilter === 'All' ? '?q=' : '&q=') + encodeURIComponent(query));
+                const response = await fetch(API_URL + '/assets/search' + window.getOwnershipQuery(true) + (window.currentOwnershipFilter === 'All' ? '?q=' : '&q=') + encodeURIComponent(query));
                 if (!response.ok) throw new Error('Search failed');
 
                 const results = await response.json();
@@ -314,7 +314,7 @@ document.getElementById('edit-allocation-form')?.addEventListener('submit', asyn
     };
 
     try {
-        const res = await fetch(`http://localhost:5000/api/allocations/${id}`, {
+        const res = await fetch(\`${API_URL}/allocations/${id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -350,7 +350,7 @@ window.deleteAllocation = async function (id) {
     });
     if (!result.isConfirmed) return;
     try {
-        const res = await fetch(`http://localhost:5000/api/allocations/${id}`, { method: 'DELETE' });
+        const res = await fetch(\`${API_URL}/allocations/${id}`, { method: 'DELETE' });
         if (!res.ok) throw new Error('Delete failed');
         showToast('Allocation deleted successfully', 'success');
         fetchAllocations();
@@ -398,7 +398,7 @@ document.getElementById('edit-return-form')?.addEventListener('submit', async (e
     };
 
     try {
-        const res = await fetch(`http://localhost:5000/api/returns/${id}`, {
+        const res = await fetch(\`${API_URL}/returns/${id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -434,7 +434,7 @@ window.deleteReturn = async function (id) {
     });
     if (!result.isConfirmed) return;
     try {
-        const res = await fetch(`http://localhost:5000/api/returns/${id}`, { method: 'DELETE' });
+        const res = await fetch(\`${API_URL}/returns/${id}`, { method: 'DELETE' });
         if (!res.ok) throw new Error('Delete failed');
         showToast('Return deleted successfully', 'success');
         fetchReturns();
@@ -493,7 +493,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const userRole = user.role;
 
         // Fetch role permissions from backend
-        fetch(`http://localhost:5000/api/roles?_t=${Date.now()}`)
+        fetch(\`${API_URL}/roles?_t=${Date.now()}`)
             .then(res => res.json())
             .then(roles => {
                 const roleObj = roles.find(r => r.name === userRole);
@@ -565,7 +565,7 @@ function logoutUser() {
 /* --- app.js --- */
 
 // Global Configuration
-var API_URL = 'http://localhost:5000/api';
+var API_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:5000/api' : '/api';
 
 window.currentOwnershipFilter = 'All';
 
@@ -853,7 +853,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // Fetch and populate accurate user role stats
-    fetch('http://localhost:5000/api/auth/role-stats')
+    fetch(API_URL + '/auth/role-stats')
         .then(res => res.json())
         .then(data => {
             let superAdminCount = 0;
@@ -886,7 +886,7 @@ var currentEditingRole = '';
 var currentEditingRow = null;
 
 function fetchRoles() {
-    fetch(`http://localhost:5000/api/roles?_t=${Date.now()}`)
+    fetch(\`${API_URL}/roles?_t=${Date.now()}`)
         .then(res => res.json())
         .then(roles => {
             roles.forEach(r => rolesCache[r.name] = r.permissions);
@@ -927,7 +927,7 @@ document.getElementById('asset-form').addEventListener('submit', async (e) => {
     };
 
     try {
-        const response = await fetch('http://localhost:5000/api/assets', {
+        const response = await fetch(API_URL + '/assets', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(assetData)
@@ -1027,7 +1027,7 @@ document.getElementById('allocation-form').addEventListener('submit', async func
     const digitalSignatureRequested = document.getElementById('alloc-signature').checked;
 
     try {
-        const response = await fetch('http://localhost:5000/api/allocations', {
+        const response = await fetch(API_URL + '/allocations', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1075,7 +1075,7 @@ async function fetchAllocations() {
         const tbody = document.getElementById('all-allocations-body');
         if (tbody) tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 40px;"><i class="fa-solid fa-spinner fa-spin" style="font-size: 2rem; color: var(--primary);"></i><br><br>Loading allocations...</td></tr>';
 
-        const response = await fetch('http://localhost:5000/api/allocations' + window.getOwnershipQuery(true));
+        const response = await fetch(API_URL + '/allocations' + window.getOwnershipQuery(true));
         if (!response.ok) throw new Error('Failed to fetch allocations');
 
         const allocations = await response.json();
@@ -1133,7 +1133,7 @@ document.getElementById('return-form').addEventListener('submit', async function
     const notes = document.getElementById('ret-notes').value.trim();
 
     try {
-        const response = await fetch('http://localhost:5000/api/returns', {
+        const response = await fetch(API_URL + '/returns', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1172,7 +1172,7 @@ async function fetchReturns() {
         const tbody = document.getElementById('all-returns-body');
         if (tbody) tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 40px;"><i class="fa-solid fa-spinner fa-spin" style="font-size: 2rem; color: var(--primary);"></i><br><br>Loading returns...</td></tr>';
 
-        const response = await fetch('http://localhost:5000/api/returns' + window.getOwnershipQuery(true));
+        const response = await fetch(API_URL + '/returns' + window.getOwnershipQuery(true));
         if (!response.ok) throw new Error('Failed to fetch returns');
 
         const returns = await response.json();
@@ -1378,7 +1378,7 @@ function toggleMobileMenu() {
 
 async function exportData(type) {
     try {
-        let endpoint = 'http://localhost:5000/api/' + type;
+        let endpoint = API_URL + '/' + type;
         const response = await fetch(endpoint);
         if (!response.ok) throw new Error('Failed to fetch data');
 
@@ -1431,7 +1431,7 @@ async function fetchReportsData() {
         const tbody = document.getElementById('reports-table-body');
         if (tbody) tbody.innerHTML = '<tr><td colspan="12" style="text-align: center; padding: 40px;"><i class="fa-solid fa-spinner fa-spin" style="font-size: 2rem; color: var(--primary);"></i><br><br>Loading data...</td></tr>';
 
-        const response = await fetch('http://localhost:5000/api/assets' + window.getOwnershipQuery());
+        const response = await fetch(API_URL + '/assets' + window.getOwnershipQuery());
         if (!response.ok) throw new Error('Failed to fetch data');
 
         const data = await response.json();
@@ -1573,7 +1573,7 @@ function fetchSettingsData() {
 }
 
 function fetchRoles() {
-    fetch('http://localhost:5000/api/roles')
+    fetch(API_URL + '/roles')
         .then(res => res.json())
         .then(roles => {
             const tbody = document.getElementById('roles-body');
@@ -1672,7 +1672,7 @@ window.cancelRoleEdit = function () {
 
 window.toggleUserBlock = async function (userId, blockStatus) {
     try {
-        const response = await fetch(`http://localhost:5000/api/users/${userId}/block`, {
+        const response = await fetch(\`${API_URL}/users/${userId}/block`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ isBlocked: blockStatus })
@@ -1697,7 +1697,7 @@ window.saveRolePermissions = async function () {
         .map(cb => cb.value);
 
     try {
-        const response = await fetch('http://localhost:5000/api/roles/' + encodeURIComponent(currentEditingRole), {
+        const response = await fetch(API_URL + '/roles/' + encodeURIComponent(currentEditingRole), {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ permissions: newPerms })
@@ -1763,7 +1763,7 @@ window.openKpiModal = async function (category) {
                     <th style="padding: 12px; border-bottom: 2px solid #e2e8f0; text-align: center;">Actions</th>
                 </tr>
             `;
-            const response = await fetch('http://localhost:5000/api/allocations' + window.getOwnershipQuery(true));
+            const response = await fetch(API_URL + '/allocations' + window.getOwnershipQuery(true));
             const allocations = await response.json();
             window.currentAllocationsData = allocations;
             let activeAllocs = allocations;
@@ -1835,7 +1835,7 @@ window.openKpiModal = async function (category) {
                     <th style="padding: 12px; border-bottom: 2px solid #e2e8f0; text-align: center;">Actions</th>
                 </tr>
             `;
-            const response = await fetch('http://localhost:5000/api/returns' + window.getOwnershipQuery(true));
+            const response = await fetch(API_URL + '/returns' + window.getOwnershipQuery(true));
             const returns = await response.json();
             window.currentReturnsData = returns;
 
@@ -1920,7 +1920,7 @@ window.openKpiModal = async function (category) {
             </tr>
         `;
 
-        const response = await fetch('http://localhost:5000/api/assets' + window.getOwnershipQuery());
+        const response = await fetch(API_URL + '/assets' + window.getOwnershipQuery());
         const assets = await response.json();
 
         let filtered = assets;
@@ -2034,7 +2034,7 @@ window.closeKpiModal = function () {
 async function openProfileModal() {
     try {
         const token = localStorage.getItem('token');
-        const response = await fetch('http://localhost:5000/api/profile', {
+        const response = await fetch(API_URL + '/profile', {
             headers: { 'Authorization': 'Bearer ' + token }
         });
         if (response.ok) {
@@ -2077,7 +2077,7 @@ async function submitProfileForm(e) {
 
     try {
         const token = localStorage.getItem('token');
-        const response = await fetch('http://localhost:5000/api/profile', {
+        const response = await fetch(API_URL + '/profile', {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
@@ -2141,7 +2141,7 @@ window.deleteAsset = async function (id) {
     }
 
     try {
-        const response = await fetch('http://localhost:5000/api/assets/' + id, {
+        const response = await fetch(API_URL + '/assets/' + id, {
             method: 'DELETE'
         });
 
@@ -2164,7 +2164,7 @@ window.deleteAsset = async function (id) {
 window.openEditModal = async function (id) {
     try {
         // Fetch asset data to populate form
-        const response = await fetch('http://localhost:5000/api/assets' + window.getOwnershipQuery());
+        const response = await fetch(API_URL + '/assets' + window.getOwnershipQuery());
         const assets = await response.json();
         const asset = assets.find(a => a._id === id);
 
@@ -2229,7 +2229,7 @@ window.submitEditForm = async function (e) {
     };
 
     try {
-        const response = await fetch('http://localhost:5000/api/assets/' + id, {
+        const response = await fetch(API_URL + '/assets/' + id, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(updatedData)
@@ -2281,7 +2281,7 @@ window.importExcelFile = async function (input) {
     formData.append('file', file);
 
     try {
-        const response = await fetch('http://localhost:5000/api/assets/import', {
+        const response = await fetch(API_URL + '/assets/import', {
             method: 'POST',
             body: formData
         });
@@ -2383,7 +2383,7 @@ window.closeExportModal = function () {
 window.exportData = async function (type) {
     showToast('Preparing export for ' + type + '...', 'info');
     try {
-        let endpoint = 'http://localhost:5000/api/' + type;
+        let endpoint = API_URL + '/' + type;
         const response = await fetch('' + endpoint);
 
         if (!response.ok) {
@@ -2430,7 +2430,7 @@ window.exportData = async function (type) {
     }
 };
 // --- AUTH.JS MERGED CONTENT ---
-var API_URL = 'http://localhost:5000/api';
+var API_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:5000/api' : '/api';
 
 document.addEventListener('DOMContentLoaded', () => {
     if (window.location.pathname.includes('auth.html') || window.location.pathname.endsWith('/frontend/') || window.location.pathname.endsWith('/frontend')) {
