@@ -1,0 +1,1939 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
+    <title>IT Asset Management System</title>
+    <link rel="icon" type="image/png" href="logo.png">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet">
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- SweetAlert2 -->
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <!-- jsPDF -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="styles.css?v=10">
+
+
+    <!-- SKEUOMORPHIC AESTHETICS (PROFILE, EDIT ASSET, KPI, REPORTS, ADD ASSET) -->
+    <style id="skeuomorphic-forms">
+        /* Physical Chassis */
+        #profile-modal .modal-content,
+        #edit-asset-modal .modal-content,
+        #role-edit-modal .modal-content,
+        #editAllocationModal .modal-content,
+        #editReturnModal .modal-content,
+        #kpi-modal .modal-content,
+        #view-reports .glass,
+        #view-assets .glass,
+        #view-allocations .glass,
+        #view-returns .glass,
+        #view-warranty .glass,
+        #view-settings .glass {
+            background-color: #f3f4f6 !important;
+            /* Soft physical white */
+            background-image: linear-gradient(180deg, #ffffff 0%, #e5e7eb 100%) !important;
+            border: 1px solid #d1d5db !important;
+            box-shadow:
+                0 30px 60px -10px rgba(0, 0, 0, 0.4),
+                /* Heavy drop shadow */
+                inset 0 2px 0 rgba(255, 255, 255, 1),
+                /* Bright top highlight */
+                inset 0 -1px 0 rgba(0, 0, 0, 0.1) !important;
+            /* Slight bottom dark edge */
+        }
+
+        /* Filter Panel Inset */
+        #kpi-filters,
+        #reports-filters {
+            background: #e5e7eb !important;
+            border: 1px solid #d1d5db !important;
+            border-top: 1px solid #9ca3af !important;
+            border-bottom: 1px solid #ffffff !important;
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.05) !important;
+        }
+
+        /* Engraved Text Effect */
+        #profile-modal h2,
+        #profile-modal label,
+        #edit-asset-modal h2,
+        #edit-asset-modal label,
+        #role-edit-modal h2,
+        #role-edit-modal label,
+        #editAllocationModal h2,
+        #editAllocationModal label,
+        #editReturnModal h2,
+        #editReturnModal label,
+        #kpi-modal h2,
+        #kpi-modal label,
+        #kpi-filters div,
+        #kpi-modal .data-table th,
+        #view-reports h3,
+        #reports-filters div,
+        #view-reports .data-table th,
+        #view-assets h1,
+        #view-assets h3,
+        #view-assets label,
+        #view-allocations h1,
+        #view-allocations h3,
+        #view-allocations label,
+        #view-returns h1,
+        #view-returns h3,
+        #view-returns label,
+        #view-warranty h1,
+        #view-warranty h3,
+        #view-warranty label,
+        #view-settings h1,
+        #view-settings h3,
+        #view-settings label {
+            color: #4b5563 !important;
+            text-shadow: 0 1px 1px rgba(255, 255, 255, 0.9) !important;
+        }
+
+        /* Deep Inset Inputs (Carved out) */
+        #profile-modal input,
+        #profile-modal select,
+        #edit-asset-modal input,
+        #edit-asset-modal select,
+        #role-edit-modal input,
+        #role-edit-modal select,
+        #editAllocationModal input,
+        #editAllocationModal select,
+        #editAllocationModal textarea,
+        #editReturnModal input,
+        #editReturnModal select,
+        #editReturnModal textarea,
+        #kpi-modal input,
+        #kpi-modal select,
+        #reports-filters input,
+        #reports-filters select,
+        #view-assets input,
+        #view-assets select,
+        #view-assets textarea,
+        #view-allocations input,
+        #view-allocations select,
+        #view-allocations textarea,
+        #view-returns input,
+        #view-returns select,
+        #view-returns textarea,
+        #view-warranty input,
+        #view-warranty select,
+        #view-warranty textarea,
+        #view-settings input,
+        #view-settings select,
+        #view-settings textarea {
+            background: #e5e7eb !important;
+            border: 1px solid #d1d5db !important;
+            border-top-color: #9ca3af !important;
+            /* Darker top border for depth */
+            box-shadow: inset 0 3px 6px rgba(0, 0, 0, 0.15), 0 1px 0 rgba(255, 255, 255, 0.8) !important;
+            /* Deep inner shadow + bottom white highlight */
+            color: #1f2937 !important;
+            transition: all 0.2s ease-in-out !important;
+        }
+
+        /* Focus state pushes the light up slightly */
+        #profile-modal input:focus,
+        #profile-modal select:focus,
+        #edit-asset-modal input:focus,
+        #edit-asset-modal select:focus,
+        #role-edit-modal input:focus,
+        #role-edit-modal select:focus,
+        #editAllocationModal input:focus,
+        #editAllocationModal select:focus,
+        #editAllocationModal textarea:focus,
+        #editReturnModal input:focus,
+        #editReturnModal select:focus,
+        #editReturnModal textarea:focus,
+        #kpi-modal input:focus,
+        #kpi-modal select:focus,
+        #reports-filters input:focus,
+        #reports-filters select:focus,
+        #view-assets input:focus,
+        #view-assets select:focus,
+        #view-assets textarea:focus,
+        #view-allocations input:focus,
+        #view-allocations select:focus,
+        #view-allocations textarea:focus,
+        #view-returns input:focus,
+        #view-returns select:focus,
+        #view-returns textarea:focus,
+        #view-warranty input:focus,
+        #view-warranty select:focus,
+        #view-warranty textarea:focus,
+        #view-settings input:focus,
+        #view-settings select:focus,
+        #view-settings textarea:focus {
+            background: #f9fafb !important;
+            border: 1px solid #60a5fa !important;
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1), 0 0 8px rgba(96, 165, 250, 0.4) !important;
+            outline: none !important;
+        }
+
+        /* Physical 3D Avatar Badge (Profile Only) */
+        #profile-modal .fa-user-shield {
+            color: #fff !important;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3) !important;
+        }
+
+        #profile-modal .modal-content>div:nth-child(2)>div:first-child {
+            background: linear-gradient(135deg, #e11d48, #9f1239) !important;
+            border: 1px solid #701a2e !important;
+            box-shadow:
+                inset 0 2px 0 rgba(255, 255, 255, 0.4),
+                inset 0 -2px 0 rgba(0, 0, 0, 0.2),
+                0 4px 6px rgba(159, 18, 57, 0.5) !important;
+        }
+
+        /* Kill Aurora Gradient */
+        #edit-asset-modal .modal-content::before,
+        #role-edit-modal .modal-content::before,
+        #editAllocationModal .modal-content::before,
+        #editReturnModal .modal-content::before {
+            display: none !important;
+        }
+
+        /* Header Icon (Edit Asset & Role Edit) */
+        #edit-asset-modal h2 i,
+        #role-edit-modal h2 i,
+        #editAllocationModal h2 i,
+        #editReturnModal h2 i {
+            color: #e11d48 !important;
+            /* Matching premium red */
+            text-shadow: 0 1px 1px rgba(255, 255, 255, 0.8) !important;
+        }
+
+        /* Raised Tactile Primary Button (Red Theme) */
+        #profile-modal .primary-btn,
+        #edit-asset-modal .primary-btn,
+        #role-edit-modal .primary-btn,
+        #editAllocationModal .primary-btn,
+        #editReturnModal .primary-btn,
+        #view-reports .primary-btn:not([onclick*="import"]) {
+            background: linear-gradient(180deg, #f43f5e 0%, #e11d48 100%) !important;
+            border: 1px solid #be123c !important;
+            color: #fff !important;
+            text-shadow: 0 -1px 0 rgba(0, 0, 0, 0.4) !important;
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.4),
+                0 4px 0 #9f1239,
+                0 6px 10px rgba(0, 0, 0, 0.2) !important;
+            transition: all 0.1s cubic-bezier(0.4, 0, 0.2, 1) !important;
+            transform: none !important;
+        }
+
+        #profile-modal .primary-btn:active,
+        #edit-asset-modal .primary-btn:active,
+        #role-edit-modal .primary-btn:active,
+        #editAllocationModal .primary-btn:active,
+        #editReturnModal .primary-btn:active,
+        #view-reports .primary-btn:not([onclick*="import"]):active {
+            transform: translateY(4px) !important;
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3), 0 0 0 #9f1239, 0 2px 4px rgba(0, 0, 0, 0.1) !important;
+        }
+
+        #profile-modal .primary-btn:hover,
+        #edit-asset-modal .primary-btn:hover,
+        #role-edit-modal .primary-btn:hover,
+        #editAllocationModal .primary-btn:hover,
+        #editReturnModal .primary-btn:hover,
+        #view-reports .primary-btn:not([onclick*="import"]):hover {
+            transform: translateY(1px) !important;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 3px 0 #9f1239, 0 6px 10px rgba(0, 0, 0, 0.3) !important;
+        }
+
+        /* Raised Tactile Primary Button (Blue Theme) */
+        #kpi-modal .primary-btn,
+        #view-assets .primary-btn,
+        #view-allocations .primary-btn,
+        #view-returns .primary-btn,
+        #view-warranty .primary-btn,
+        #view-settings .primary-btn {
+            background: linear-gradient(180deg, #60a5fa 0%, #3b82f6 100%) !important;
+            border: 1px solid #2563eb !important;
+            color: #fff !important;
+            text-shadow: 0 -1px 0 rgba(0, 0, 0, 0.4) !important;
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.4),
+                0 4px 0 #1d4ed8,
+                0 6px 10px rgba(0, 0, 0, 0.2) !important;
+            transition: all 0.1s cubic-bezier(0.4, 0, 0.2, 1) !important;
+            transform: none !important;
+        }
+
+        #edit-asset-modal .primary-btn:active,
+        #kpi-modal .primary-btn:active,
+        #view-assets .primary-btn:active,
+        #view-allocations .primary-btn:active,
+        #view-returns .primary-btn:active,
+        #view-warranty .primary-btn:active,
+        #view-settings .primary-btn:active {
+            transform: translateY(4px) !important;
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3), 0 0 0 #1d4ed8, 0 2px 4px rgba(0, 0, 0, 0.1) !important;
+        }
+
+        #edit-asset-modal .primary-btn:hover,
+        #kpi-modal .primary-btn:hover,
+        #view-assets .primary-btn:hover,
+        #view-allocations .primary-btn:hover,
+        #view-returns .primary-btn:hover,
+        #view-warranty .primary-btn:hover,
+        #view-settings .primary-btn:hover {
+            transform: translateY(1px) !important;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 3px 0 #1d4ed8, 0 6px 10px rgba(0, 0, 0, 0.3) !important;
+        }
+
+        /* Raised Tactile Primary Button (Green Theme - Import Excel) */
+        #view-reports button[onclick*="import"] {
+            background: linear-gradient(180deg, #4ade80 0%, #22c55e 100%) !important;
+            border: 1px solid #16a34a !important;
+            color: #fff !important;
+            text-shadow: 0 -1px 0 rgba(0, 0, 0, 0.4) !important;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 4px 0 #15803d, 0 6px 10px rgba(0, 0, 0, 0.2) !important;
+            transition: all 0.1s cubic-bezier(0.4, 0, 0.2, 1) !important;
+            transform: none !important;
+        }
+
+        #view-reports button[onclick*="import"]:active {
+            transform: translateY(4px) !important;
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3), 0 0 0 #15803d, 0 2px 4px rgba(0, 0, 0, 0.1) !important;
+        }
+
+        #view-reports button[onclick*="import"]:hover {
+            transform: translateY(1px) !important;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 3px 0 #15803d, 0 6px 10px rgba(0, 0, 0, 0.3) !important;
+        }
+
+        /* Secondary Button Physicality (Shared) */
+        #profile-modal .secondary-btn,
+        #edit-asset-modal .secondary-btn,
+        #role-edit-modal .secondary-btn,
+        #editAllocationModal .secondary-btn,
+        #editReturnModal .secondary-btn,
+        #kpi-modal .secondary-btn,
+        #view-reports .secondary-btn,
+        #view-assets .secondary-btn,
+        #view-allocations .secondary-btn,
+        #view-returns .secondary-btn,
+        #view-warranty .secondary-btn,
+        #view-settings .secondary-btn {
+            background: linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%) !important;
+            border: 1px solid #cbd5e1 !important;
+            color: #475569 !important;
+            box-shadow:
+                inset 0 1px 0 #ffffff,
+                0 2px 0 #94a3b8,
+                0 4px 6px rgba(0, 0, 0, 0.1) !important;
+            transition: all 0.1s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        }
+
+        #profile-modal .secondary-btn:active,
+        #edit-asset-modal .secondary-btn:active,
+        #role-edit-modal .secondary-btn:active,
+        #editAllocationModal .secondary-btn:active,
+        #editReturnModal .secondary-btn:active,
+        #kpi-modal .secondary-btn:active,
+        #view-reports .secondary-btn:active,
+        #view-assets .secondary-btn:active,
+        #view-allocations .secondary-btn:active,
+        #view-returns .secondary-btn:active,
+        #view-warranty .secondary-btn:active,
+        #view-settings .secondary-btn:active {
+            transform: translateY(2px) !important;
+            box-shadow:
+                inset 0 2px 4px rgba(0, 0, 0, 0.15),
+                0 0 0 #94a3b8,
+                0 1px 2px rgba(0, 0, 0, 0.1) !important;
+        }
+    </style>
+
+    <!-- SKEUOMORPHIC DASHBOARD (MAIN UI) -->
+    <style id="skeuomorphic-dashboard">
+        /* Dashboard Background */
+        body,
+        .app-container {
+            background: #e5e7eb !important;
+            /* Solid physical grey desk/chassis */
+        }
+
+        /* Sidebar Chassis */
+        .sidebar {
+            background-color: #f3f4f6 !important;
+            background-image: linear-gradient(90deg, #ffffff 0%, #e5e7eb 100%) !important;
+            border-right: 1px solid #d1d5db !important;
+            box-shadow:
+                4px 0 15px rgba(0, 0, 0, 0.1),
+                inset -2px 0 0 rgba(0, 0, 0, 0.05) !important;
+        }
+
+        /* Dashboard Banner (Raised Plate) */
+        .dashboard-banner {
+            background-color: #f3f4f6 !important;
+            background-image: linear-gradient(180deg, #ffffff 0%, #e5e7eb 100%) !important;
+            border: 1px solid #d1d5db !important;
+            border-top: 1px solid #ffffff !important;
+            border-bottom: 1px solid #9ca3af !important;
+            box-shadow:
+                0 10px 20px -5px rgba(0, 0, 0, 0.15),
+                inset 0 1px 0 #ffffff !important;
+            color: #1f2937 !important;
+            text-shadow: 0 1px 1px rgba(255, 255, 255, 0.8) !important;
+            border-radius: 12px !important;
+        }
+
+        .dashboard-banner h1 {
+            color: #1f2937 !important;
+            text-shadow: 0 1px 1px rgba(255, 255, 255, 0.8) !important;
+        }
+
+        .dashboard-banner p {
+            color: #4b5563 !important;
+        }
+
+        .dashboard-banner span {
+            background: #e5e7eb !important;
+            border: 1px solid #d1d5db !important;
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1), 0 1px 0 rgba(255, 255, 255, 0.8) !important;
+            color: #374151 !important;
+            text-shadow: none !important;
+        }
+
+        /* KPI & Chart Cards (Physical Modules) */
+        .kpi-card,
+        .chart-card {
+            background-color: #f3f4f6 !important;
+            background-image: linear-gradient(180deg, #ffffff 0%, #e5e7eb 100%) !important;
+            border: 1px solid #d1d5db !important;
+            border-top: 1px solid #ffffff !important;
+            border-bottom: 1px solid #9ca3af !important;
+            box-shadow:
+                0 10px 20px -5px rgba(0, 0, 0, 0.15),
+                inset 0 1px 0 #ffffff !important;
+            backdrop-filter: none !important;
+            /* Remove glass blur */
+            color: #1f2937 !important;
+            border-radius: 12px !important;
+        }
+
+        /* Engraved Text on Cards */
+        .kpi-card h3,
+        .kpi-card p,
+        .chart-card h3 {
+            color: #4b5563 !important;
+            text-shadow: 0 1px 1px rgba(255, 255, 255, 0.9) !important;
+        }
+
+        .kpi-card h3 {
+            color: #1f2937 !important;
+        }
+
+        /* KPI Icons (Inset Badges) */
+        .kpi-icon {
+            background: #e5e7eb !important;
+            border: 1px solid #d1d5db !important;
+            box-shadow:
+                inset 0 3px 6px rgba(0, 0, 0, 0.1),
+                0 1px 0 rgba(255, 255, 255, 0.8) !important;
+        }
+
+        .kpi-icon i {
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2) !important;
+        }
+
+        /* Recent Activities (Recessed Screen) */
+        .recent-activities {
+            background: #e5e7eb !important;
+            border: 1px solid #d1d5db !important;
+            border-top-color: #9ca3af !important;
+            box-shadow:
+                inset 0 3px 6px rgba(0, 0, 0, 0.1),
+                0 1px 0 rgba(255, 255, 255, 0.8) !important;
+            backdrop-filter: none !important;
+            border-radius: 12px !important;
+        }
+
+        .recent-activities h3,
+        .recent-activities th,
+        .recent-activities td {
+            color: #374151 !important;
+            text-shadow: 0 1px 1px rgba(255, 255, 255, 0.8) !important;
+        }
+
+        .recent-activities th {
+            border-bottom: 1px solid #d1d5db !important;
+        }
+
+        .recent-activities td {
+            border-bottom: 1px solid rgba(0, 0, 0, 0.05) !important;
+        }
+
+        /* SweetAlert z-index fix */
+        .swal2-container {
+            z-index: 999999 !important;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Interactive Ambient Background -->
+    <div class="ambient-bg" id="ambient-bg"></div>
+    <div class="app-container">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <div class="sidebar-header" style="flex-direction: column; align-items: stretch; gap: 16px;">
+                <div style="display: flex; align-items: center; justify-content: space-between;">
+                    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 10px;">
+                        <link href="https://fonts.googleapis.com/css2?family=Syncopate:wght@700&display=swap"
+                            rel="stylesheet">
+                        <h2 class="virtuoso-logo-text" style="font-size: 1.6rem; margin: 0;">VIRTUOSO</h2>
+                    </div>
+                    <!-- Mobile button moved to top-header -->
+                    <button class="mobile-menu-close" onclick="toggleMobileMenu()"
+                        style="display: none; background: transparent; border: none; font-size: 1.5rem; color: var(--text-main); cursor: pointer;"><i
+                            class="fa-solid fa-xmark"></i></button>
+                </div>
+
+                <div class="company-switcher">
+                    <button class="switcher-btn active" onclick="setGlobalOwnership('All', this)">All</button>
+                    <button class="switcher-btn" onclick="setGlobalOwnership('VIRTUOSO', this)">Virtuoso</button>
+                    <button class="switcher-btn" onclick="setGlobalOwnership('Rental', this)">Rental</button>
+                </div>
+            </div>
+            <ul class="nav-links">
+                <li class="active"><a href="#index"><i class="fa-solid fa-chart-pie"></i> Dashboard</a></li>
+                <li style="display: none;"><a href="#assets"><i class="fa-solid fa-laptop"></i> Asset Master</a></li>
+                <li style="display: none;"><a href="#allocations"><i class="fa-solid fa-users"></i> Allocations</a></li>
+                <li style="display: none;"><a href="#returns"><i class="fa-solid fa-rotate-left"></i> Returns</a></li>
+                <li style="display: none;"><a href="#warranty"><i class="fa-solid fa-shield-halved"></i> Warranty Mgmt</a></li>
+                <li style="display: none;"><a href="#reports"><i class="fa-solid fa-file-invoice"></i> Reports</a></li>
+                <li style="display: none;"><a href="#settings"><i class="fa-solid fa-gear"></i> Settings</a></li>
+            </ul>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="top-header">
+                <div class="top-header-border"></div>
+                <div class="header-brand" style="display: flex; align-items: center; gap: 10px;">
+                    <button class="mobile-menu-btn" onclick="toggleMobileMenu()"><i
+                            class="fa-solid fa-bars"></i></button>
+                    <div class="virtuoso-logo-text" style="font-size: 1.5rem;">VIRTUOSO</div>
+                </div>
+                <div class="search-bar">
+                    <i class="fa-solid fa-magnifying-glass"></i>
+                    <input type="text" id="global-search-input" placeholder="Search Assets, Software, Serials...">
+                    <div id="global-search-results" class="search-dropdown"></div>
+                </div>
+                <div class="header-actions">
+                    <div class="header-control-cluster">
+                        <div class="user-profile" id="user-profile-menu">
+                            <img id="user-avatar"
+                                src="https://ui-avatars.com/api/?name=User&background=A855F7&color=fff" alt="User">
+                            <div style="display: flex; flex-direction: column; line-height: 1.2;">
+                                <span id="user-name" style="font-weight: 600;">Loading...</span>
+                                <span id="user-role"
+                                    style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">...</span>
+                            </div>
+                            <i class="fa-solid fa-chevron-down"
+                                style="font-size: 0.8rem; margin-left: 5px; color: var(--text-muted);"></i>
+
+                            <div class="user-dropdown">
+                                <ul>
+                                    <li><a href="#" onclick="openProfileModal(); return false;"><i
+                                                class="fa-solid fa-user"></i> My Profile</a></li>
+                                    <div class="divider"></div>
+                                    <li><a href="#" onclick="logoutUser()"><i
+                                                class="fa-solid fa-arrow-right-from-bracket"></i> Logout</a></li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Dashboard Content -->
+            <div id="view-index" class="page-view">
+                <div class="dashboard">
+                    <div class="dashboard-banner premium-virtuoso-banner">
+                        <div class="banner-content">
+                            <h1
+                                style="font-size: 1.7rem; font-weight: 700; letter-spacing: 0.5px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px;">
+                                Virtuoso Projects & Engineers Pvt Ltd
+                                <span
+                                    style="font-size: 0.85rem; font-weight: 600; background: rgba(255, 255, 255, 0.15); padding: 6px 14px; border-radius: 20px; border: 1px solid rgba(255, 255, 255, 0.3); backdrop-filter: blur(5px); letter-spacing: 1.5px; text-transform: uppercase; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">AssetPro
+                                    IT</span>
+                            </h1>
+                            <p>Real-time analytics & asset lifecycle intelligence</p>
+                        </div>
+                        <button class="primary-btn pulse-btn" onclick="window.location.hash='#assets'"><i
+                                class="fa-solid fa-plus"></i> Add New Asset</button>
+                    </div>
+
+                    <!-- KPI Cards -->
+                    <div class="kpi-grid">
+                        <div class="kpi-card glass kpi-white" onclick="openKpiModal('Total')">
+                            <div class="kpi-icon"><i class="fa-solid fa-boxes-stacked"></i></div>
+                            <div class="kpi-info">
+                                <h3 id="kpi-total">--</h3>
+                                <p>Total IT Assets</p>
+                            </div>
+                        </div>
+                        <div class="kpi-card glass kpi-white" onclick="openKpiModal('In Use')">
+                            <div class="kpi-icon"><i class="fa-solid fa-user-check"></i></div>
+                            <div class="kpi-info">
+                                <h3 id="kpi-in-use">--</h3>
+                                <p>Assets In Use</p>
+                            </div>
+                        </div>
+                        <div class="kpi-card glass kpi-white" onclick="openKpiModal('In Stock')">
+                            <div class="kpi-icon orange"><i class="fa-solid fa-box-open"></i></div>
+                            <div class="kpi-info">
+                                <h3 id="kpi-in-stock">--</h3>
+                                <p>Assets In Stock</p>
+                            </div>
+                        </div>
+                        <div class="kpi-card glass kpi-white" onclick="openKpiModal('Repair')">
+                            <div class="kpi-icon red"><i class="fa-solid fa-wrench"></i></div>
+                            <div class="kpi-info">
+                                <h3 id="kpi-repair">--</h3>
+                                <p>Under Repair</p>
+                            </div>
+                        </div>
+                        <div class="kpi-card glass kpi-white" onclick="openKpiModal('Software')">
+                            <div class="kpi-icon maroon"><i class="fa-brands fa-windows"></i></div>
+                            <div class="kpi-info">
+                                <h3 id="kpi-software">--</h3>
+                                <p>Software Licenses</p>
+                            </div>
+                        </div>
+                        <div class="kpi-card glass kpi-white" onclick="openKpiModal('Monitors')">
+                            <div class="kpi-icon orange"><i class="fa-solid fa-display"></i></div>
+                            <div class="kpi-info">
+                                <h3 id="kpi-monitors">--</h3>
+                                <p>Total Monitors</p>
+                            </div>
+                        </div>
+                        <div class="kpi-card glass kpi-white" onclick="openKpiModal('Returns')">
+                            <div class="kpi-icon red"><i class="fa-solid fa-rotate-left"></i></div>
+                            <div class="kpi-info">
+                                <h3 id="kpi-returns">--</h3>
+                                <p>Total Returns</p>
+                            </div>
+                        </div>
+                        <div class="kpi-card glass kpi-white" onclick="openKpiModal('Allocations')">
+                            <div class="kpi-icon blue"
+                                style="background: rgba(59, 130, 246, 0.1); color: var(--blue-primary);"><i
+                                    class="fa-solid fa-user-check"></i></div>
+                            <div class="kpi-info">
+                                <h3 id="kpi-allocations">--</h3>
+                                <p>Total Allocations</p>
+                            </div>
+                        </div>
+                        <div class="kpi-card glass kpi-white" onclick="openKpiModal('Mouse')">
+                            <div class="kpi-icon orange"><i class="fa-solid fa-computer-mouse"></i></div>
+                            <div class="kpi-info">
+                                <h3 id="kpi-mouse">--</h3>
+                                <p>Total Mouse</p>
+                            </div>
+                        </div>
+                        <div class="kpi-card glass kpi-white" onclick="openKpiModal('Keyboard')">
+                            <div class="kpi-icon blue"><i class="fa-solid fa-keyboard"></i></div>
+                            <div class="kpi-info">
+                                <h3 id="kpi-keyboard">--</h3>
+                                <p>Total Keyboards</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Charts Section -->
+                    <div class="charts-grid">
+                        <div class="chart-card glass">
+                            <h3>Assets by Device Type</h3>
+                            <div style="position: relative; flex-grow: 1; width: 100%; min-height: 250px;">
+                                <canvas id="deviceTypeChart"></canvas>
+                            </div>
+                        </div>
+                        <div class="chart-card glass">
+                            <h3>Assets by Status</h3>
+                            <div style="position: relative; flex-grow: 1; width: 100%; min-height: 250px;">
+                                <canvas id="statusChart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Recent Activities -->
+                    <div class="recent-activities glass" style="margin-top: 30px;">
+                        <h3 style="margin-bottom: 15px; font-size: 1.2rem; font-weight: 700; color: var(--text-main);">
+                            Recent Activities</h3>
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Asset Tag</th>
+                                        <th>Device Type</th>
+                                        <th>Status</th>
+                                        <th>Last Updated</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="recent-activities-body">
+                                    <tr>
+                                        <td colspan="4" class="text-center">Loading data...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- ====== ASSETS VIEW ====== -->
+            <div id="view-assets" class="page-view" style="display:none;">
+                <div class="dashboard">
+                    <div class="dashboard-header">
+                        <h1>Add New Asset</h1>
+                    </div>
+
+                    <div class="glass" style="padding: 36px;">
+                        <form id="asset-form">
+
+                            <!-- Basic Information -->
+                            <div class="form-section">
+                                <h3><i class="fa-solid fa-circle-info"></i> Basic Information</h3>
+                                <div class="form-grid">
+                                    <div class="form-group">
+                                        <label>SR No *</label>
+                                        <input type="text" id="srNo" required placeholder="SR-001">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Asset Tag Number *</label>
+                                        <input type="text" id="assetTagNumber" required placeholder="TAG-101">
+                                    </div>
+                                    <div class="form-group">
+                                        <label id="serialNumberLabel">Serial Number *</label>
+                                        <input type="text" id="serialNumber" required placeholder="">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Device Type *</label>
+                                        <select id="deviceType" required>
+                                            <option value="Laptop">Laptop</option>
+                                            <option value="Desktop">Desktop</option>
+                                            <option value="Server">Server</option>
+                                            <option value="Printer">Printer</option>
+                                            <option value="Monitor">Monitor</option>
+                                            <option value="Keyboard">Keyboard</option>
+                                            <option value="Mouse">Mouse</option>
+                                            <option value="Software">Software</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group" id="softwareCategoryGroup" style="display:none;">
+                                        <label>Software Category</label>
+                                        <input type="text" id="softwareCategory"
+                                            placeholder="Enter Software Category manually (e.g. Operating System, Design)">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Make & Model</label>
+                                        <input type="text" id="make" placeholder="e.g. Dell Latitude 5430">
+                                    </div>
+                                    <div class="form-group" style="display:none;">
+                                        <label>Model</label>
+                                        <input type="text" id="model" placeholder="Latitude 5430">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Configuration Details -->
+                            <div class="form-section" id="config-details-section">
+                                <h3><i class="fa-solid fa-microchip"></i> Configuration Details</h3>
+                                <div class="form-grid">
+                                    <div class="form-group"><label>Processor</label>
+                                        <select id="processor"
+                                            style="width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 0.95rem; background: white; outline: none; transition: border-color 0.2s;">
+                                            <option value="">Select Processor</option>
+                                            <option value="Intel Core i3">Intel Core i3</option>
+                                            <option value="Intel Core i5">Intel Core i5</option>
+                                            <option value="Intel Core i7">Intel Core i7</option>
+                                            <option value="Intel Core i9">Intel Core i9</option>
+                                            <option value="AMD Ryzen 3">AMD Ryzen 3</option>
+                                            <option value="AMD Ryzen 5">AMD Ryzen 5</option>
+                                            <option value="AMD Ryzen 7">AMD Ryzen 7</option>
+                                            <option value="AMD Ryzen 9">AMD Ryzen 9</option>
+                                            <option value="Apple M1">Apple M1</option>
+                                            <option value="Apple M2">Apple M2</option>
+                                            <option value="Apple M3">Apple M3</option>
+                                            <option value="Other">Other</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group"><label>Generation</label>
+                                        <select id="generation"
+                                            style="width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 0.95rem; background: white; outline: none; transition: border-color 0.2s;">
+                                            <option value="">Select Generation</option>
+                                            <option value="8th Gen">8th Gen</option>
+                                            <option value="9th Gen">9th Gen</option>
+                                            <option value="10th Gen">10th Gen</option>
+                                            <option value="11th Gen">11th Gen</option>
+                                            <option value="12th Gen">12th Gen</option>
+                                            <option value="13th Gen">13th Gen</option>
+                                            <option value="14th Gen">14th Gen</option>
+                                            <option value="Apple Silicon">Apple Silicon</option>
+                                            <option value="N/A">N/A</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group"><label>RAM</label>
+                                        <select id="ram"
+                                            style="width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 0.95rem; background: white; outline: none; transition: border-color 0.2s;">
+                                            <option value="">Select RAM</option>
+                                            <option value="4 GB">4 GB</option>
+                                            <option value="8 GB">8 GB</option>
+                                            <option value="12 GB">12 GB</option>
+                                            <option value="16 GB">16 GB</option>
+                                            <option value="24 GB">24 GB</option>
+                                            <option value="32 GB">32 GB</option>
+                                            <option value="64 GB">64 GB</option>
+                                            <option value="128 GB">128 GB</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group"><label>Storage</label>
+                                        <select id="storage"
+                                            style="width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 0.95rem; background: white; outline: none; transition: border-color 0.2s;">
+                                            <option value="">Select Storage</option>
+                                            <option value="128 GB SSD">128 GB SSD</option>
+                                            <option value="256 GB SSD">256 GB SSD</option>
+                                            <option value="512 GB SSD">512 GB SSD</option>
+                                            <option value="1 TB SSD">1 TB SSD</option>
+                                            <option value="2 TB SSD">2 TB SSD</option>
+                                            <option value="500 GB HDD">500 GB HDD</option>
+                                            <option value="1 TB HDD">1 TB HDD</option>
+                                            <option value="2 TB HDD">2 TB HDD</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group"><label>Operating System</label>
+                                        <select id="os"
+                                            style="width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 0.95rem; background: white; outline: none; transition: border-color 0.2s;">
+                                            <option value="">Select OS</option>
+                                            <option value="Windows 10 Pro">Windows 10 Pro</option>
+                                            <option value="Windows 10 Home">Windows 10 Home</option>
+                                            <option value="Windows 11 Pro">Windows 11 Pro</option>
+                                            <option value="Windows 11 Home">Windows 11 Home</option>
+                                            <option value="macOS Sonoma">macOS Sonoma</option>
+                                            <option value="macOS Ventura">macOS Ventura</option>
+                                            <option value="macOS Monterey">macOS Monterey</option>
+                                            <option value="Ubuntu Linux">Ubuntu Linux</option>
+                                            <option value="CentOS">CentOS</option>
+                                            <option value="Chrome OS">Chrome OS</option>
+                                            <option value="Windows Server 2019">Windows Server 2019</option>
+                                            <option value="Windows Server 2022">Windows Server 2022</option>
+                                            <option value="None">None</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group" style="display:none;"><label>MAC Address</label><input type="text" id="macAddress"
+                                            placeholder="AA:BB:CC:DD:EE:FF"></div>
+                                </div>
+                            </div>
+
+                            <!-- Purchase & Warranty -->
+                            <div class="form-section">
+                                <h3><i class="fa-solid fa-receipt"></i> Purchase &amp; Warranty</h3>
+                                <div class="form-grid">
+                                    <div class="form-group">
+                                        <label>Ownership</label>
+                                        <select id="ownership">
+                                            <option value="Rental">Rental</option>
+                                            <option value="VIRTUOSO">VIRTUOSO</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group"><label>Vendor Name</label><input type="text" id="vendorName"
+                                            placeholder="Vendor Co. Ltd."></div>
+                                    <div class="form-group"><label>Purchase Date</label><input type="date"
+                                            id="purchaseDate"></div>
+                                    <div class="form-group">
+                                        <label>Warranty End Date</label>
+                                        <input type="date" id="warrantyEndDate">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Assign NAME</label>
+                                        <input type="text" id="assignedToName"
+                                            placeholder="Employee Name (e.g. Shivani)">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Employee ID</label>
+                                        <input type="text" id="employeeId" placeholder="Emp ID (e.g. 101)">
+                                    </div>
+                                    <div class="form-group" style="display:none;">
+                                        <label>Assigned By</label>
+                                        <input type="text" id="assignedBy" placeholder="Admin Name (e.g. Hitesh)">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Status *</label>
+                                        <select id="status" required>
+                                            <option value="In Stock">In Stock</option>
+                                            <option value="In Use">In Use</option>
+                                            <option value="Under Repair">Under Repair</option>
+                                            <option value="Damaged">Damaged</option>
+                                            <option value="Lost">Lost</option>
+                                            <option value="Scrapped">Scrapped</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="btn-group">
+                                <button type="reset" class="secondary-btn"><i class="fa-solid fa-rotate-right"></i>
+                                    Reset</button>
+                                <button type="submit" class="primary-btn"><i class="fa-solid fa-floppy-disk"></i> Save
+                                    Asset</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- ====== ALLOCATIONS VIEW ====== -->
+            <div id="view-allocations" class="page-view" style="display:none;">
+                <div class="dashboard">
+                    <div class="dashboard-header">
+                        <h1>Employee Asset Allocation</h1>
+                    </div>
+
+                    <div class="glass" style="padding: 36px; max-width: 900px;">
+                        <form id="allocation-form">
+                            <h3
+                                style="margin-bottom: 24px; font-size: 1.2rem; font-weight: 700; color: var(--text-main);">
+                                <i class="fa-solid fa-user-plus" style="color: var(--red-primary);"></i>&nbsp; Assign
+                                Asset to Employee
+                            </h3>
+
+                            <div class="form-grid">
+                                <div class="form-group">
+                                    <label>Search Employee *</label>
+                                    <input type="text" id="alloc-employee" placeholder="Enter Name or ID..."
+                                        class="form-control" required>
+                                </div>
+                                <div class="form-group">
+                                    <label>Search Asset *</label>
+                                    <input type="text" id="alloc-asset" placeholder="Enter Asset Tag..."
+                                        class="form-control" required>
+                                </div>
+                                <div class="form-group">
+                                    <label>Assign Date *</label>
+                                    <input type="date" id="alloc-date" class="form-control" required>
+                                </div>
+                                <div class="form-group">
+                                    <label>Expected Return Date (Optional)</label>
+                                    <input type="date" id="alloc-return-date" class="form-control">
+                                </div>
+                            </div>
+
+                            <div class="form-group" style="margin-top: 20px;">
+                                <label>Issue Notes</label>
+                                <textarea id="alloc-notes" class="form-control" rows="4"
+                                    placeholder="Any specific notes or accessories provided..."
+                                    style="padding:14px;"></textarea>
+                            </div>
+
+                            <div class="form-group" style="margin-top: 20px;">
+                                <label
+                                    style="display: flex; align-items: center; gap: 10px; cursor: pointer; font-weight: 500;">
+                                    <input type="checkbox" id="alloc-signature"
+                                        style="width: 18px; height: 18px; accent-color: var(--red-primary);">
+                                    Send Digital Signature Request to Employee
+                                </label>
+                            </div>
+
+                            <div class="btn-group" style="margin-top: 30px;">
+                                <button type="button" class="secondary-btn"><i class="fa-solid fa-xmark"></i>
+                                    Cancel</button>
+                                <button type="submit" class="primary-btn"><i class="fa-solid fa-check"></i> Assign
+                                    Asset</button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- All Allocations Table -->
+                    <div class="glass" style="margin-top: 30px; max-width: 900px;">
+                        <div class="table-header"
+                            style="display: flex; justify-content: space-between; margin-bottom: 20px;">
+                            <h3 style="font-size: 1.2rem; font-weight: 700; color: var(--text-main);">
+                                <i class="fa-solid fa-list" style="color: var(--blue-primary);"></i>&nbsp; Allocation
+                                History
+                            </h3>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Employee</th>
+                                        <th>Asset Tag</th>
+                                        <th>Assign Date</th>
+                                        <th>Notes</th>
+                                        <th>Status</th>
+                                        <th style="text-align: center;">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="all-allocations-body">
+                                    <tr>
+                                        <td colspan="5" class="text-center">Loading allocations...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                </div>
+
+            </div>
+
+            <!-- ====== RETURNS VIEW ====== -->
+            <div id="view-returns" class="page-view" style="display:none;">
+                <div class="dashboard">
+                    <div class="dashboard-header">
+                        <h1>Asset Return Module</h1>
+                    </div>
+
+                    <div class="glass" style="padding: 36px; max-width: 900px;">
+                        <form id="return-form">
+                            <h3
+                                style="margin-bottom: 24px; font-size: 1.2rem; font-weight: 700; color: var(--text-main);">
+                                <i class="fa-solid fa-box-open" style="color: var(--red-primary);"></i>&nbsp; Process
+                                Asset Return
+                            </h3>
+
+                            <div class="form-grid">
+                                <div class="form-group">
+                                    <label>Search Asset (Tag/Serial) *</label>
+                                    <input type="text" id="ret-asset" placeholder="Enter Asset Tag..."
+                                        class="form-control" required>
+                                </div>
+                                <div class="form-group">
+                                    <label>Returned By (Employee) *</label>
+                                    <input type="text" id="ret-employee" placeholder="Enter Name or ID..."
+                                        class="form-control" required>
+                                </div>
+                                <div class="form-group">
+                                    <label>Return Date *</label>
+                                    <input type="date" id="ret-date" class="form-control" required>
+                                </div>
+                                <div class="form-group">
+                                    <label>Device Condition</label>
+                                    <select id="ret-condition" class="form-control">
+                                        <option value="Good">Good / Working</option>
+                                        <option value="Damaged">Damaged</option>
+                                        <option value="Poor">Needs Repair</option>
+                                        <option value="Scrap">Scrap</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Penalty Amount ($) (If applicable)</label>
+                                    <input type="number" id="ret-penalty" placeholder="0.00" class="form-control">
+                                </div>
+                            </div>
+
+                            <div class="form-group" style="margin-top: 20px;">
+                                <label>Damage Details / Remarks</label>
+                                <textarea id="ret-notes" class="form-control" rows="3"
+                                    placeholder="Describe any damage, missing accessories, etc."
+                                    style="padding:14px;"></textarea>
+                            </div>
+
+                            <div class="form-group" style="margin-top: 20px;">
+                                <label
+                                    style="display: flex; align-items: center; gap: 10px; cursor: pointer; font-weight: 500;">
+                                    <input type="checkbox"
+                                        style="width: 18px; height: 18px; accent-color: var(--red-primary);" checked>
+                                    Auto-change status to "In Stock"
+                                </label>
+                            </div>
+
+                            <div class="btn-group" style="margin-top: 30px;">
+                                <button type="button" class="secondary-btn"><i class="fa-solid fa-xmark"></i>
+                                    Cancel</button>
+                                <button type="submit" class="primary-btn"><i class="fa-solid fa-rotate-left"></i>
+                                    Process Return</button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- All Returns Table -->
+                    <div class="glass" style="margin-top: 30px; max-width: 900px;">
+                        <div class="table-header"
+                            style="display: flex; justify-content: space-between; margin-bottom: 20px;">
+                            <h3 style="font-size: 1.2rem; font-weight: 700; color: var(--text-main);">
+                                <i class="fa-solid fa-list" style="color: var(--blue-primary);"></i>&nbsp; Return
+                                History
+                            </h3>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Asset Tag</th>
+                                        <th>Returned By</th>
+                                        <th>Date</th>
+                                        <th>Condition</th>
+                                        <th>Penalty</th>
+                                        <th>Notes</th>
+                                        <th style="text-align: center;">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="all-returns-body">
+                                    <tr>
+                                        <td colspan="6" class="text-center">Loading returns...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                </div>
+
+            </div>
+
+            <!-- ====== WARRANTY VIEW ====== -->
+            <div id="view-warranty" class="page-view" style="display:none;">
+                <div class="dashboard">
+                    <div class="dashboard-header">
+                        <h1>Warranty &amp; AMC Management</h1>
+                    </div>
+
+                    <!-- KPI Cards -->
+                    <div class="kpi-grid"
+                        style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-bottom: 28px;">
+                        <div class="kpi-card glass">
+                            <div class="kpi-icon orange"><i class="fa-solid fa-clock-rotate-left"></i></div>
+                            <div class="kpi-info">
+                                <h3 id="kpi-expiring">--</h3>
+                                <p>Expiring in 30 Days</p>
+                            </div>
+                        </div>
+                        <div class="kpi-card glass">
+                            <div class="kpi-icon red"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                            <div class="kpi-info">
+                                <h3 id="kpi-expired">--</h3>
+                                <p>Warranty Expired</p>
+                            </div>
+                        </div>
+                        <div class="kpi-card glass">
+                            <div class="kpi-icon green"><i class="fa-solid fa-shield"></i></div>
+                            <div class="kpi-info">
+                                <h3 id="kpi-valid">--</h3>
+                                <p>Under Active Warranty</p>
+                            </div>
+                        </div>
+                        <div class="kpi-card glass">
+                            <div class="kpi-icon maroon"><i class="fa-solid fa-file-contract"></i></div>
+                            <div class="kpi-info">
+                                <h3 id="kpi-total-tracked">--</h3>
+                                <p>Total Tracked Assets</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Warranty Table -->
+                    <div class="glass" style="padding: 28px;">
+                        <div
+                            style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:12px;">
+                            <h3 style="font-size:1.1rem; font-weight:700; color:var(--text-main);">
+                                <i class="fa-solid fa-list-check" style="color:var(--red-primary);"></i>&nbsp; Asset
+                                Warranty Tracker
+                            </h3>
+                            <div class="filter-bar" style="margin-bottom:0;">
+                                <button class="filter-btn active" id="filter-all"
+                                    onclick="applyFilter('all')">All</button>
+                                <button class="filter-btn" id="filter-expiring"
+                                    onclick="applyFilter('expiring')">Expiring Soon</button>
+                                <button class="filter-btn" id="filter-expired"
+                                    onclick="applyFilter('expired')">Expired</button>
+                                <button class="filter-btn" id="filter-valid"
+                                    onclick="applyFilter('valid')">Active</button>
+                            </div>
+                        </div>
+
+                        <div class="table-responsive">
+                            <table class="data-table" style="border-collapse:collapse; width:100%;">
+                                <thead>
+                                    <tr>
+                                        <th
+                                            style="padding:12px 16px; text-align:left; color:var(--text-muted); font-size:0.8rem; text-transform:uppercase; letter-spacing:0.08em;">
+                                            Asset Tag</th>
+                                        <th
+                                            style="padding:12px 16px; text-align:left; color:var(--text-muted); font-size:0.8rem; text-transform:uppercase; letter-spacing:0.08em;">
+                                            Device / Make</th>
+
+                                        <th
+                                            style="padding:12px 16px; text-align:left; color:var(--text-muted); font-size:0.8rem; text-transform:uppercase; letter-spacing:0.08em;">
+                                            Warranty End Date</th>
+                                        <th
+                                            style="padding:12px 16px; text-align:left; color:var(--text-muted); font-size:0.8rem; text-transform:uppercase; letter-spacing:0.08em;">
+                                            Status</th>
+                                        <th
+                                            style="padding:12px 16px; text-align:left; color:var(--text-muted); font-size:0.8rem; text-transform:uppercase; letter-spacing:0.08em;">
+                                            Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="warranty-table-body">
+                                    <tr>
+                                        <td colspan="5"
+                                            style="text-align:center; padding:40px; color:var(--text-muted);">
+                                            <i class="fa-solid fa-spinner fa-spin"
+                                                style="font-size:1.5rem; color:var(--red-primary);"></i>
+                                            <p style="margin-top:12px;">Loading warranty data...</p>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- ====== REPORTS VIEW ====== -->
+            <div id="view-reports" class="page-view" style="display:none;">
+                <div class="dashboard">
+                    <div class="dashboard-header">
+                        <h1>System Reports &amp; Exports</h1>
+                    </div>
+
+                    <div class="glass" style="padding: 28px; margin-bottom: 28px;">
+                        <div
+                            style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; flex-wrap: wrap; gap: 15px; border-bottom: 1px solid #d1d5db; padding-bottom: 15px; box-shadow: 0 1px 0 rgba(255,255,255,0.8);">
+                            <h3
+                                style="font-size: 1.2rem; font-weight: 700; color: #4b5563; margin: 0; text-shadow: 0 1px 1px rgba(255,255,255,0.9);">
+                                <i class="fa-solid fa-table-list" style="color: #e11d48;"></i> Live Asset Inventory
+                            </h3>
+                            <div style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+                                <input type="file" id="import-file-input" accept=".xlsx,.xls,.csv" style="display:none;"
+                                    onchange="importExcelFile(this)">
+                                <button class="primary-btn"
+                                    onclick="document.getElementById('import-file-input').click()"
+                                    style="display: flex; align-items: center; gap: 8px; font-size: 0.95rem; padding: 10px 20px;">
+                                    <i class="fa-solid fa-file-import"></i> Import Excel
+                                </button>
+                                <button class="primary-btn" onclick="openExportModal()"
+                                    style="display: flex; align-items: center; gap: 8px; font-size: 0.95rem; padding: 10px 20px;">
+                                    <i class="fa-solid fa-file-csv"></i> Export CSV
+                                </button>
+                                <button class="primary-btn" onclick="exportReportsToPDF()"
+                                    style="display: flex; align-items: center; gap: 8px; font-size: 0.95rem; padding: 10px 20px; background: #e11d48; border: none;">
+                                    <i class="fa-solid fa-file-pdf"></i> Export PDF
+                                </button>
+                            </div>
+                        </div>
+
+                        <div id="reports-filters"
+                            style="display: flex; gap: 15px; margin-bottom: 25px; flex-wrap: wrap; align-items: center; padding: 20px; border-radius: 12px;">
+                            <div
+                                style="font-weight: 700; color: #4b5563; font-size: 0.95rem; margin-right: 5px; text-shadow: 0 1px 1px rgba(255,255,255,0.9);">
+                                <i class="fa-solid fa-filter"></i> Filters:
+                            </div>
+                            <select id="reports-filter-day" class="form-control"
+                                style="padding: 10px 15px; border-radius: 8px; min-width: 100px;">
+                                <option value="">Day</option>
+                                <script>
+                                    for (let i = 1; i <= 31; i++) {
+                                        document.write('<option value="' + i + '">' + i + '</option>');
+                                    }
+                                </script>
+                            </select>
+                            <select id="reports-filter-month" class="form-control"
+                                style="padding: 10px 15px; border-radius: 8px; min-width: 120px;">
+                                <option value="">Month</option>
+                                <option value="0">Jan</option>
+                                <option value="1">Feb</option>
+                                <option value="2">Mar</option>
+                                <option value="3">Apr</option>
+                                <option value="4">May</option>
+                                <option value="5">Jun</option>
+                                <option value="6">Jul</option>
+                                <option value="7">Aug</option>
+                                <option value="8">Sep</option>
+                                <option value="9">Oct</option>
+                                <option value="10">Nov</option>
+                                <option value="11">Dec</option>
+                            </select>
+                            <select id="reports-filter-year" class="form-control"
+                                style="padding: 10px 15px; border-radius: 8px; min-width: 110px;">
+                                <option value="">Year</option>
+                                <option value="2023">2023</option>
+                                <option value="2024">2024</option>
+                                <option value="2025">2025</option>
+                                <option value="2026">2026</option>
+                                <option value="2027">2027</option>
+                            </select>
+                            <select id="reports-filter-device" class="form-control"
+                                style="padding: 10px 15px; border-radius: 8px; min-width: 180px;">
+                                <option value="">All Device Types</option>
+                                <option value="Laptop">Laptop</option>
+                                <option value="Desktop">Desktop</option>
+                                <option value="Monitor">Monitor</option>
+                                <option value="Server">Server</option>
+                                <option value="Printer">Printer</option>
+                                <option value="Keyboard">Keyboard</option>
+                                <option value="Mouse">Mouse</option>
+                                <option value="Software">Software</option>
+                            </select>
+                            <div style="display: flex; gap: 12px; margin-left: auto; flex-shrink: 0; flex-wrap: wrap;">
+                                <button onclick="applyReportsFilters()" class="primary-btn"
+                                    style="padding: 10px 20px; font-size: 0.95rem; display: flex; align-items: center; gap: 8px;">
+                                    <i class="fa-solid fa-magnifying-glass"></i> Search
+                                </button>
+                                <button onclick="clearReportsFilters()" class="secondary-btn"
+                                    style="padding: 10px 20px; font-size: 0.95rem; display: flex; align-items: center; gap: 8px;">
+                                    <i class="fa-solid fa-rotate-left"></i> Reset
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="table-responsive">
+                            <table class="data-table" id="reports-table">
+                                <thead>
+                                    <tr>
+                                        <th>SR No</th>
+                                        <th>Asset Tag</th>
+                                        <th>Serial/Key</th>
+                                        <th>Device Type</th>
+                                        <th>Make & Model</th>
+                                        <th style="display:none;">Software</th>
+                                        <th>Assign Date</th>
+                                        <th>Valid Date</th>
+                                        <th>Remark</th>
+                                        <th>Status</th>
+                                        <th>Assign NAME</th>
+                                        <th>Employee ID</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="reports-table-body">
+                                    <tr>
+                                        <td colspan="9" style="text-align: center; padding: 40px;">
+                                            <i class="fa-solid fa-spinner fa-spin"
+                                                style="font-size:1.5rem; color:var(--red-primary);"></i>
+                                            <p style="margin-top:12px; color:var(--text-muted);">Loading data...</p>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+
+
+                </div>
+
+            </div>
+
+
+            <!-- ====== SETTINGS VIEW ====== -->
+            <!-- ====== SETTINGS VIEW ====== -->
+            <div id="view-settings" class="page-view" style="display:none;">
+                <div class="dashboard">
+                    <div class="dashboard-header">
+                        <h1>System Settings & Access Control</h1>
+                    </div>
+
+                    <div class="kpi-grid" style="grid-template-columns: 1fr;">
+                        <div class="kpi-card glass" style="flex-direction: column; align-items: flex-start;">
+                            <h3
+                                style="margin-bottom: 20px; border-bottom: 1px solid var(--border); padding-bottom: 10px; width: 100%;">
+                                Role-Based Access Control (RBAC)</h3>
+                            <p style="color: var(--text-muted); font-size: 0.95rem; margin-bottom: 24px;">Select the
+                                permissions for each user role in the system.</p>
+
+                            <div class="table-container" style="width: 100%;">
+                                <table class="data-table" id="roles-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Role Name</th>
+                                            <th>Permissions</th>
+                                            <th>Total Users</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="roles-body">
+                                        <!-- Populated dynamically -->
+                                    </tbody>
+                                </table>
+                            </div>
+
+
+                        </div>
+                    </div>
+                </div>
+
+        </main>
+    </div>
+
+    <!-- Custom JS -->
+
+    <script>
+        function toggleNotifications() {
+            const dropdown = document.getElementById('notif-dropdown');
+            if (dropdown) {
+                dropdown.classList.toggle('show');
+            }
+        }
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', function (event) {
+            const dropdown = document.getElementById('notif-dropdown');
+            const btn = document.getElementById('notif-btn');
+            if (dropdown && btn && !btn.contains(event.target) && !dropdown.contains(event.target)) {
+                dropdown.classList.remove('show');
+            }
+        });
+    </script>
+
+    <script>
+        function toggleMobileMenu() {
+            const sidebar = document.querySelector('.sidebar');
+            if (sidebar) sidebar.classList.toggle('show-menu');
+        }
+    </script>
+
+    <!-- Edit Allocation Modal -->
+    <div id="editAllocationModal" class="modal aurora-modal"
+        style="display: none; position: fixed; z-index: 99999; left: 0; top: 0; width: 100vw; height: 100vh; background-color: rgba(15, 23, 42, 0.7); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); justify-content: center; align-items: center; opacity: 0; transition: opacity 0.3s ease;">
+        <div class="modal-content"
+            style="background: rgba(255, 255, 255, 0.98); padding: 40px; border-radius: 24px; box-shadow: 0 30px 60px -15px rgba(0, 0, 0, 0.6); width: 90%; max-width: 700px; position: relative; max-height: 90vh; overflow-y: auto; border: 1px solid rgba(255,255,255,0.4); transform: scale(0.95); transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
+            <span class="close" onclick="closeEditModal('editAllocationModal')"
+                style="position: absolute; top: 25px; right: 30px; font-size: 32px; font-weight: 300; cursor: pointer; color: #64748b; transition: color 0.2s, transform 0.2s;"
+                onmouseover="this.style.color='#ef4444'; this.style.transform='rotate(90deg)';"
+                onmouseout="this.style.color='#64748b'; this.style.transform='rotate(0deg)';">&times;</span>
+            <div style="margin-bottom:30px;">
+                <h2 style="margin:0; font-size:1.8rem; font-weight: 700; color:var(--text-main);"><i
+                        class="fa-solid fa-pen" style="color: var(--blue-primary);"></i> Edit Allocation</h2>
+            </div>
+            <form id="edit-allocation-form">
+                <input type="hidden" id="edit-alloc-id">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Employee Name *</label>
+                        <input type="text" id="edit-alloc-employee" class="form-control" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Asset Tag *</label>
+                        <input type="text" id="edit-alloc-asset" class="form-control" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Assign Date</label>
+                        <input type="date" id="edit-alloc-date" class="form-control">
+                    </div>
+                    <div class="form-group">
+                        <label>Expected Return Date</label>
+                        <input type="date" id="edit-alloc-return-date" class="form-control">
+                    </div>
+                </div>
+                <div class="form-group" style="margin-top: 20px;">
+                    <label>Issue Notes</label>
+                    <textarea id="edit-alloc-notes" class="form-control" rows="3" style="padding:14px;"></textarea>
+                </div>
+                <div class="btn-group" style="margin-top:30px;">
+                    <button type="button" class="secondary-btn" onclick="closeEditModal('editAllocationModal')"><i
+                            class="fa-solid fa-xmark"></i> Cancel</button>
+                    <button type="submit" class="primary-btn"><i class="fa-solid fa-check"></i> Save Changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Edit Return Modal -->
+    <div id="editReturnModal" class="modal aurora-modal"
+        style="display: none; position: fixed; z-index: 99999; left: 0; top: 0; width: 100vw; height: 100vh; background-color: rgba(15, 23, 42, 0.7); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); justify-content: center; align-items: center; opacity: 0; transition: opacity 0.3s ease;">
+        <div class="modal-content"
+            style="background: rgba(255, 255, 255, 0.98); padding: 40px; border-radius: 24px; box-shadow: 0 30px 60px -15px rgba(0, 0, 0, 0.6); width: 90%; max-width: 700px; position: relative; max-height: 90vh; overflow-y: auto; border: 1px solid rgba(255,255,255,0.4); transform: scale(0.95); transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
+            <span class="close" onclick="closeEditModal('editReturnModal')"
+                style="position: absolute; top: 25px; right: 30px; font-size: 32px; font-weight: 300; cursor: pointer; color: #64748b; transition: color 0.2s, transform 0.2s;"
+                onmouseover="this.style.color='#ef4444'; this.style.transform='rotate(90deg)';"
+                onmouseout="this.style.color='#64748b'; this.style.transform='rotate(0deg)';">&times;</span>
+            <div style="margin-bottom:30px;">
+                <h2 style="margin:0; font-size:1.8rem; font-weight: 700; color:var(--text-main);"><i
+                        class="fa-solid fa-rotate-left" style="color: var(--blue-primary);"></i> Edit Return</h2>
+            </div>
+            <form id="edit-return-form">
+                <input type="hidden" id="edit-ret-id">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Asset Tag *</label>
+                        <input type="text" id="edit-ret-asset" class="form-control" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Returned By *</label>
+                        <input type="text" id="edit-ret-employee" class="form-control" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Return Date</label>
+                        <input type="date" id="edit-ret-date" class="form-control">
+                    </div>
+                    <div class="form-group">
+                        <label>Condition</label>
+                        <select id="edit-ret-condition" class="form-control">
+                            <option value="Excellent">Excellent</option>
+                            <option value="Good">Good / Working</option>
+                            <option value="Fair">Fair</option>
+                            <option value="Poor">Needs Repair</option>
+                            <option value="Damaged">Damaged</option>
+                            <option value="Scrap">Scrap</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Penalty Amount ($)</label>
+                        <input type="number" id="edit-ret-penalty" class="form-control">
+                    </div>
+                </div>
+                <div class="form-group" style="margin-top: 20px;">
+                    <label>Notes</label>
+                    <textarea id="edit-ret-notes" class="form-control" rows="3" style="padding:14px;"></textarea>
+                </div>
+                <div class="btn-group" style="margin-top:30px;">
+                    <button type="button" class="secondary-btn" onclick="closeEditModal('editReturnModal')"><i
+                            class="fa-solid fa-xmark"></i> Cancel</button>
+                    <button type="submit" class="primary-btn"><i class="fa-solid fa-check"></i> Save Changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Profile Modal -->
+    <div id="profile-modal" class="modal"
+        style="display: none; position: fixed; z-index: 99999; left: 0; top: 0; width: 100vw; height: 100vh; background-color: rgba(15, 23, 42, 0.7); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); justify-content: center; align-items: center; opacity: 0; transition: opacity 0.3s ease;">
+        <div class="modal-content"
+            style="background: rgba(255, 255, 255, 0.98); padding: 40px; border-radius: 24px; box-shadow: 0 30px 60px -15px rgba(0, 0, 0, 0.6); width: 90%; max-width: 650px; position: relative; max-height: 90vh; overflow-y: auto; border: 1px solid rgba(255,255,255,0.4); transform: scale(0.95); transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
+            <span class="close" onclick="closeProfileModal()"
+                style="position: absolute; top: 25px; right: 30px; font-size: 32px; font-weight: 300; cursor: pointer; color: #64748b; transition: color 0.2s, transform 0.2s;"
+                onmouseover="this.style.color='#ef4444'; this.style.transform='rotate(90deg)';"
+                onmouseout="this.style.color='#64748b'; this.style.transform='rotate(0deg)';">&times;</span>
+
+            <div
+                style="display: flex; align-items: center; gap: 15px; border-bottom: 2px solid #f1f5f9; padding-bottom: 20px; margin-bottom: 30px;">
+                <div
+                    style="width: 50px; height: 50px; border-radius: 12px; background: linear-gradient(135deg, var(--red-primary), #be123c); display: flex; align-items: center; justify-content: center; color: white; font-size: 1.5rem; box-shadow: 0 4px 10px rgba(225, 29, 72, 0.3);">
+                    <i class="fa-solid fa-user-shield"></i>
+                </div>
+                <div>
+                    <h2 style="font-size: 1.8rem; color: #0f172a; font-weight: 700; margin: 0;">My Profile</h2>
+                    <p style="color: #64748b; font-size: 0.9rem; margin: 5px 0 0 0;">Update your personal details and
+                        employee information.</p>
+                </div>
+            </div>
+
+            <form id="profile-form" onsubmit="submitProfileForm(event)">
+                <div class="form-grid"
+                    style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 30px;">
+                    <div class="form-group" style="display: flex; flex-direction: column; gap: 10px;">
+                        <label style="font-weight: 600; font-size: 0.9rem; color: #334155;"><i
+                                class="fa-regular fa-id-card" style="color: var(--red-primary); margin-right: 5px;"></i>
+                            Full Name *</label>
+                        <input type="text" id="prof-name" required
+                            style="padding: 12px 16px; border: 1.5px solid #e2e8f0; border-radius: 10px; font-family: 'Inter', sans-serif; font-size: 1rem; transition: border-color 0.2s; outline: none;"
+                            onfocus="this.style.borderColor='var(--red-primary)'"
+                            onblur="this.style.borderColor='#e2e8f0'">
+                    </div>
+
+                    <div class="form-group" style="display: flex; flex-direction: column; gap: 10px;">
+                        <label style="font-weight: 600; font-size: 0.9rem; color: #334155;"><i
+                                class="fa-regular fa-envelope"
+                                style="color: var(--red-primary); margin-right: 5px;"></i> Email Address *</label>
+                        <input type="email" id="prof-email" required
+                            style="padding: 12px 16px; border: 1.5px solid #e2e8f0; border-radius: 10px; font-family: 'Inter', sans-serif; font-size: 1rem; transition: border-color 0.2s; outline: none;"
+                            onfocus="this.style.borderColor='var(--red-primary)'"
+                            onblur="this.style.borderColor='#e2e8f0'">
+                    </div>
+
+                    <div class="form-group" style="display: flex; flex-direction: column; gap: 10px;">
+                        <label style="font-weight: 600; font-size: 0.9rem; color: #334155;"><i class="fa-solid fa-phone"
+                                style="color: var(--red-primary); margin-right: 5px;"></i> Phone Number</label>
+                        <input type="text" id="prof-phone" placeholder="+1 (555) 000-0000"
+                            style="padding: 12px 16px; border: 1.5px solid #e2e8f0; border-radius: 10px; font-family: 'Inter', sans-serif; font-size: 1rem; transition: border-color 0.2s; outline: none;"
+                            onfocus="this.style.borderColor='var(--red-primary)'"
+                            onblur="this.style.borderColor='#e2e8f0'">
+                    </div>
+
+                    <div class="form-group" style="display: flex; flex-direction: column; gap: 10px;">
+                        <label style="font-weight: 600; font-size: 0.9rem; color: #334155;"><i
+                                class="fa-solid fa-briefcase" style="color: var(--red-primary); margin-right: 5px;"></i>
+                            Employee ID</label>
+                        <input type="text" id="prof-empId" placeholder="EMP-001"
+                            style="padding: 12px 16px; border: 1.5px solid #e2e8f0; border-radius: 10px; font-family: 'Inter', sans-serif; font-size: 1rem; transition: border-color 0.2s; outline: none;"
+                            onfocus="this.style.borderColor='var(--red-primary)'"
+                            onblur="this.style.borderColor='#e2e8f0'">
+                    </div>
+                </div>
+
+                <div
+                    style="display: flex; justify-content: flex-end; gap: 15px; border-top: 2px solid #f1f5f9; padding-top: 25px;">
+                    <button type="button" class="secondary-btn" onclick="closeProfileModal()"
+                        style="padding: 12px 24px; font-size: 1rem; border-radius: 10px;">Cancel</button>
+                    <button type="submit" class="primary-btn"
+                        style="padding: 12px 28px; font-size: 1rem; border-radius: 10px; background: linear-gradient(135deg, var(--red-primary), #be123c); border: none; box-shadow: 0 4px 12px rgba(225, 29, 72, 0.3); transition: all 0.2s;"
+                        onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 15px rgba(225, 29, 72, 0.4)';"
+                        onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 12px rgba(225, 29, 72, 0.3)';"><i
+                            class="fa-solid fa-cloud-arrow-up"></i> Save Profile</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="update_logo.js"></script>
+    <script src="main.js?v=11"></script>
+    <script>
+        // Define closeEditModal directly in HTML to avoid any caching issues
+        // Includes fallback for the Asset modal which doesn't pass an ID
+        window.closeEditModal = function (modalId) {
+            if (!modalId) {
+                modalId = 'edit-asset-modal';
+            }
+            const modal = document.getElementById(modalId);
+            if (!modal) return;
+            modal.style.opacity = '0';
+            const content = modal.querySelector('.modal-content');
+            if (content) content.style.transform = 'scale(0.95)';
+            setTimeout(() => {
+                modal.style.display = 'none';
+            }, 300);
+        };
+    </script>
+
+    <!-- KPI Click Modal -->
+    <div id="kpi-modal" class="modal"
+        style="display: none; position: fixed; z-index: 99999; left: 0; top: 0; width: 100vw; height: 100vh; background-color: rgba(15, 23, 42, 0.7); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); justify-content: center; align-items: center; opacity: 0; transition: opacity 0.3s ease;">
+        <div class="modal-content"
+            style="background: rgba(255, 255, 255, 0.95); padding: 35px; border-radius: 20px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); width: 90%; max-width: 950px; position: relative; max-height: 85vh; overflow-y: auto; border: 1px solid rgba(255,255,255,0.2); transform: scale(0.95); transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
+            <span class="close" onclick="closeKpiModal()"
+                style="position: absolute; top: 20px; right: 25px; font-size: 32px; font-weight: 300; cursor: pointer; color: #64748b; transition: color 0.2s, transform 0.2s;"
+                onmouseover="this.style.color='#ef4444'; this.style.transform='rotate(90deg)';"
+                onmouseout="this.style.color='#64748b'; this.style.transform='rotate(0deg)';">&times;</span>
+            <h2 id="kpi-modal-title"
+                style="margin-bottom: 25px; font-size: 1.8rem; color: #0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom: 15px;">
+                Assets
+            </h2>
+
+            <div id="kpi-filters"
+                style="display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap; align-items: center; background: #f8fafc; padding: 15px; border-radius: 12px; border: 1px solid #e2e8f0;">
+                <div style="font-weight: 600; color: #475569; font-size: 0.9rem; margin-right: 5px;"><i
+                        class="fa-solid fa-filter"></i> Filters:</div>
+                <select id="kpi-filter-day"
+                    style="padding: 8px 12px; border-radius: 8px; border: 1px solid #cbd5e1; font-family: 'Inter', sans-serif; outline: none; transition: border-color 0.2s;">
+                    <option value="">Day</option>
+                    <script>
+                        for (let i = 1; i <= 31; i++) {
+                            document.write('<option value="' + i + '">' + i + '</option>');
+                        }
+                    </script>
+                </select>
+                <select id="kpi-filter-month"
+                    style="padding: 8px 12px; border-radius: 8px; border: 1px solid #cbd5e1; font-family: 'Inter', sans-serif; outline: none; transition: border-color 0.2s;">
+                    <option value="">Month</option>
+                    <option value="0">Jan</option>
+                    <option value="1">Feb</option>
+                    <option value="2">Mar</option>
+                    <option value="3">Apr</option>
+                    <option value="4">May</option>
+                    <option value="5">Jun</option>
+                    <option value="6">Jul</option>
+                    <option value="7">Aug</option>
+                    <option value="8">Sep</option>
+                    <option value="9">Oct</option>
+                    <option value="10">Nov</option>
+                    <option value="11">Dec</option>
+                </select>
+                <select id="kpi-filter-year"
+                    style="padding: 8px 12px; border-radius: 8px; border: 1px solid #cbd5e1; font-family: 'Inter', sans-serif; outline: none; transition: border-color 0.2s;">
+                    <option value="">Year</option>
+                    <option value="2023">2023</option>
+                    <option value="2024">2024</option>
+                    <option value="2025">2025</option>
+                    <option value="2026">2026</option>
+                    <option value="2027">2027</option>
+                </select>
+                <select id="kpi-filter-device"
+                    style="padding: 8px 12px; border-radius: 8px; border: 1px solid #cbd5e1; font-family: 'Inter', sans-serif; outline: none; transition: border-color 0.2s;">
+                    <option value="">All Device Types</option>
+                    <option value="Laptop">Laptop</option>
+                    <option value="Desktop">Desktop</option>
+                    <option value="Monitor">Monitor</option>
+                    <option value="Server">Server</option>
+                    <option value="Printer">Printer</option>
+                    <option value="Keyboard">Keyboard</option>
+                    <option value="Mouse">Mouse</option>
+                    <option value="Software">Software</option>
+                </select>
+                <input type="text" id="kpi-filter-search" placeholder="Search (Tag, Name, etc.)"
+                    style="padding: 8px 12px; border-radius: 8px; border: 1px solid #cbd5e1; font-family: 'Inter', sans-serif; outline: none; transition: border-color 0.2s; min-width: 200px;">
+                <button onclick="applyKpiFilters()" class="primary-btn" style="padding: 8px 16px; font-size: 0.9rem;"><i
+                        class="fa-solid fa-magnifying-glass"></i> Search</button>
+                <button onclick="clearKpiFilters()" class="secondary-btn"
+                    style="padding: 8px 16px; font-size: 0.9rem;"><i class="fa-solid fa-rotate-left"></i> Reset</button>
+                <button onclick="exportKpiData()" class="primary-btn"
+                    style="padding: 8px 16px; font-size: 0.9rem; background: #10b981; border: none;"><i class="fa-solid fa-file-export"></i> Export</button>
+            </div>
+
+            <div style="overflow-x: auto;">
+                <table class="data-table" style="width: 100%; text-align: left; border-collapse: collapse;">
+                    <thead id="kpi-modal-thead"
+                        style="background-color: #f8fafc; color: #475569; font-weight: 600; text-transform: uppercase; font-size: 0.85rem; letter-spacing: 0.05em;">
+                        <tr>
+                            <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">SR No</th>
+                            <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Asset Tag</th>
+                            <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Serial/Key</th>
+                            <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Device Type</th>
+                            <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Make & Model</th>
+                            <th style="padding: 12px; border-bottom: 2px solid #e2e8f0; display:none;">Software</th>
+                            <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Assign Date</th>
+                            <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Valid Date</th>
+                            <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Remark</th>
+                            <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Status</th>
+                            <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Assign NAME</th>
+                            <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Employee ID</th>
+                            <th style="padding: 12px; border-bottom: 2px solid #e2e8f0; text-align: center;">Actions
+                            </th>
+                        </tr>
+                    </thead>
+                    <tbody id="kpi-modal-body" style="font-size: 0.95rem; color: #334155;">
+                        <!-- Data populated by JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <!-- Edit Asset Modal -->
+    <div id="edit-asset-modal" class="modal aurora-modal"
+        style="display: none; position: fixed; z-index: 99999; left: 0; top: 0; width: 100vw; height: 100vh; background-color: rgba(15, 23, 42, 0.7); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); justify-content: center; align-items: center; opacity: 0; transition: opacity 0.3s ease;">
+        <div class="modal-content"
+            style="background: rgba(255, 255, 255, 0.95); padding: 35px; border-radius: 20px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); width: 90%; max-width: 600px; position: relative; max-height: 90vh; overflow-y: auto; border: 1px solid rgba(255,255,255,0.2); transform: scale(0.95); transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
+            <span class="close" onclick="closeEditModal()"
+                style="position: absolute; top: 20px; right: 25px; font-size: 32px; font-weight: 300; cursor: pointer; color: #64748b; transition: color 0.2s, transform 0.2s;"
+                onmouseover="this.style.color='#ef4444'; this.style.transform='rotate(90deg)';"
+                onmouseout="this.style.color='#64748b'; this.style.transform='rotate(0deg)';">&times;</span>
+
+            <h2
+                style="margin-bottom: 25px; font-size: 1.8rem; color: #0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom: 15px;">
+                <i class="fa-solid fa-pen-to-square" style="color: var(--red-primary);"></i> Edit Asset
+            </h2>
+
+            <form id="edit-asset-form" onsubmit="submitEditForm(event)">
+                <input type="hidden" id="edit-asset-id">
+                <div class="form-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                    <div class="form-group" style="display: flex; flex-direction: column; gap: 8px;">
+                        <label style="font-weight: 600; font-size: 0.9rem; color: #475569;">Asset Tag Number *</label>
+                        <input type="text" id="edit-assetTagNumber" required
+                            style="padding: 10px 15px; border: 1px solid #cbd5e1; border-radius: 8px; font-family: 'Inter', sans-serif;">
+                    </div>
+                    <div class="form-group" style="display: flex; flex-direction: column; gap: 8px;">
+                        <label style="font-weight: 600; font-size: 0.9rem; color: #475569;">Serial Number</label>
+                        <input type="text" id="edit-serialNumber"
+                            style="padding: 10px 15px; border: 1px solid #cbd5e1; border-radius: 8px; font-family: 'Inter', sans-serif;">
+                    </div>
+                    <div class="form-group" style="display: flex; flex-direction: column; gap: 8px;">
+                        <label style="font-weight: 600; font-size: 0.9rem; color: #475569;">Make & Model</label>
+                        <input type="text" id="edit-make"
+                            style="padding: 10px 15px; border: 1px solid #cbd5e1; border-radius: 8px; font-family: 'Inter', sans-serif;">
+                    </div>
+                    <div class="form-group" style="display: none; flex-direction: column; gap: 8px;">
+                        <label style="font-weight: 600; font-size: 0.9rem; color: #475569;">Model</label>
+                        <input type="text" id="edit-model"
+                            style="padding: 10px 15px; border: 1px solid #cbd5e1; border-radius: 8px; font-family: 'Inter', sans-serif;">
+                    </div>
+                    <div class="form-group" style="display: flex; flex-direction: column; gap: 8px;">
+                        <label style="font-weight: 600; font-size: 0.9rem; color: #475569;">Assign NAME</label>
+                        <input type="text" id="edit-assignedToName" placeholder="Employee Name"
+                            style="padding: 10px 15px; border: 1px solid #cbd5e1; border-radius: 8px; font-family: 'Inter', sans-serif;">
+                    </div>
+                    <div class="form-group" style="display: flex; flex-direction: column; gap: 8px;">
+                        <label style="font-weight: 600; font-size: 0.9rem; color: #475569;">Employee ID</label>
+                        <input type="text" id="edit-employeeId" placeholder="Emp ID"
+                            style="padding: 10px 15px; border: 1px solid #cbd5e1; border-radius: 8px; font-family: 'Inter', sans-serif;">
+                    </div>
+                    <div class="form-group" style="display: none; flex-direction: column; gap: 8px;">
+                        <label style="font-weight: 600; font-size: 0.9rem; color: #475569;">Assigned By</label>
+                        <input type="text" id="edit-assignedBy" placeholder="Admin Name"
+                            style="padding: 10px 15px; border: 1px solid #cbd5e1; border-radius: 8px; font-family: 'Inter', sans-serif;">
+                    </div>
+                    <div class="form-group" style="display: flex; flex-direction: column; gap: 8px;">
+                        <label style="font-weight: 600; font-size: 0.9rem; color: #475569;">Status *</label>
+                        <select id="edit-status" required
+                            style="padding: 10px 15px; border: 1px solid #cbd5e1; border-radius: 8px; font-family: 'Inter', sans-serif;">
+                            <option value="In Stock">In Stock</option>
+                            <option value="In Use">In Use</option>
+                            <option value="Under Repair">Under Repair</option>
+                            <option value="Damaged">Damaged</option>
+                            <option value="Lost">Lost</option>
+                            <option value="Scrapped">Scrapped</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="display: flex; flex-direction: column; gap: 8px;">
+                        <label style="font-weight: 600; font-size: 0.9rem; color: #475569;">Warranty End Date</label>
+                        <input type="date" id="edit-warrantyEndDate"
+                            style="padding: 10px 15px; border: 1px solid #cbd5e1; border-radius: 8px; font-family: 'Inter', sans-serif;">
+                    </div>
+                </div>
+                <div style="margin-top: 30px; display: flex; justify-content: flex-end; gap: 15px;">
+                    <button type="button" class="secondary-btn" onclick="closeEditModal()">Cancel</button>
+                    <button type="submit" class="primary-btn"><i class="fa-solid fa-save"></i> Save Changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    <!-- Role Edit Modal -->
+    <div id="role-edit-modal" class="modal aurora-modal"
+        style="display: none; position: fixed; z-index: 99999; left: 0; top: 0; width: 100vw; height: 100vh; background-color: rgba(15, 23, 42, 0.7); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); justify-content: center; align-items: center; opacity: 0; transition: opacity 0.3s ease;">
+        <div class="modal-content"
+            style="background: rgba(255, 255, 255, 0.95); padding: 35px; border-radius: 20px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); width: 90%; max-width: 600px; position: relative; max-height: 90vh; overflow-y: auto; border: 1px solid rgba(255,255,255,0.2); transform: scale(0.95); transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
+            <span class="close" onclick="cancelRoleEdit()"
+                style="position: absolute; top: 20px; right: 25px; font-size: 32px; font-weight: 300; cursor: pointer; color: #64748b; transition: color 0.2s, transform 0.2s;"
+                onmouseover="this.style.color='#ef4444'; this.style.transform='rotate(90deg)';"
+                onmouseout="this.style.color='#64748b'; this.style.transform='rotate(0deg)';">&times;</span>
+
+            <h2 id="editing-role-name"
+                style="margin-bottom: 25px; font-size: 1.8rem; color: #0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom: 15px;">
+                <i class="fa-solid fa-user-shield" style="color: var(--red-primary);"></i> Editing Role
+            </h2>
+
+            <div class="checkbox-group"
+                style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px; margin-bottom: 30px;">
+                <label
+                    style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.95rem; color:#475569;"><input
+                        type="checkbox" class="perm-checkbox" value="index.html" style="width:18px;height:18px;">
+                    Dashboard</label>
+                <label
+                    style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.95rem; color:#475569;"><input
+                        type="checkbox" class="perm-checkbox" value="assets.html" style="width:18px;height:18px;"> Asset
+                    Master</label>
+                <label
+                    style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.95rem; color:#475569;"><input
+                        type="checkbox" class="perm-checkbox" value="allocations.html" style="width:18px;height:18px;">
+                    Allocations</label>
+                <label
+                    style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.95rem; color:#475569;"><input
+                        type="checkbox" class="perm-checkbox" value="returns.html" style="width:18px;height:18px;">
+                    Returns</label>
+                <label
+                    style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.95rem; color:#475569;"><input
+                        type="checkbox" class="perm-checkbox" value="warranty.html" style="width:18px;height:18px;">
+                    Warranty Mgmt</label>
+                <label
+                    style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.95rem; color:#475569;"><input
+                        type="checkbox" class="perm-checkbox" value="reports.html" style="width:18px;height:18px;">
+                    Reports</label>
+                <label
+                    style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.95rem; color:#475569;"><input
+                        type="checkbox" class="perm-checkbox" value="settings.html" style="width:18px;height:18px;">
+                    Settings</label>
+            </div>
+
+            <h3
+                style="margin-bottom: 15px; font-size: 1.2rem; color: #0f172a; border-bottom: 1px solid #e2e8f0; padding-bottom: 10px;">
+                <i class="fa-solid fa-users" style="color: var(--text-muted); margin-right: 8px;"></i> Assigned Users
+            </h3>
+            <div id="role-users-list"
+                style="margin-bottom: 30px; display: flex; flex-direction: column; gap: 10px; max-height: 180px; overflow-y: auto; padding: 10px; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0;">
+                <!-- Populated dynamically -->
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; gap: 15px;">
+                <button type="button" class="secondary-btn" onclick="cancelRoleEdit()">Cancel</button>
+                <button type="button" class="primary-btn" onclick="saveRolePermissions()"><i
+                        class="fa-solid fa-save"></i> Save Permissions</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Export Modal -->
+    <div id="export-modal" class="modal"
+        style="display: none; position: fixed; z-index: 99999; left: 0; top: 0; width: 100vw; height: 100vh; background-color: rgba(15, 23, 42, 0.7); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); justify-content: center; align-items: center; opacity: 0; transition: opacity 0.3s ease;">
+        <div class="modal-content"
+            style="background: rgba(255, 255, 255, 0.95); padding: 35px; border-radius: 20px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); width: 90%; max-width: 500px; position: relative; max-height: 90vh; overflow-y: auto; border: 1px solid rgba(255,255,255,0.2); transform: scale(0.95); transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
+            <span class="close" onclick="closeExportModal()"
+                style="position: absolute; top: 20px; right: 25px; font-size: 32px; font-weight: 300; cursor: pointer; color: #64748b; transition: color 0.2s, transform 0.2s;"
+                onmouseover="this.style.color='#ef4444'; this.style.transform='rotate(90deg)';"
+                onmouseout="this.style.color='#64748b'; this.style.transform='rotate(0deg)';">&times;</span>
+
+            <h2
+                style="margin-bottom: 25px; font-size: 1.8rem; color: #0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom: 15px;">
+                <i class="fa-solid fa-file-export" style="color: var(--red-primary);"></i> Export Data
+            </h2>
+            <p style="color: #64748b; margin-bottom: 20px; font-size: 0.95rem;">Select the dataset you would like to
+                download as a CSV file. Files will automatically download to your computer.</p>
+
+            <div style="display: grid; grid-template-columns: 1fr; gap: 15px;">
+                <div class="export-card"
+                    style="border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 10px; background: #f8fafc; transition: all 0.2s;"
+                    onmouseover="this.style.borderColor='var(--red-primary)'; this.style.backgroundColor='#fff';"
+                    onmouseout="this.style.borderColor='#e2e8f0'; this.style.backgroundColor='#f8fafc';">
+                    <h4 style="color: var(--text-main); font-size: 1.1rem; font-weight: 700; margin: 0;"><i
+                            class="fa-solid fa-boxes-stacked" style="color: var(--red-primary); margin-right: 8px;"></i>
+                        Master Asset Database (.csv)</h4>
+                    <p style="color: var(--text-muted); font-size: 0.9rem; margin: 0; line-height: 1.4;">Downloads a
+                        complete spreadsheet containing all registered IT assets, including their serial numbers,
+                        models, device types, and current real-time status.</p>
+                    <button class="primary-btn" onclick="exportData('assets')"
+                        style="align-self: flex-start; margin-top: 5px; font-size: 0.85rem; padding: 8px 16px;"><i
+                            class="fa-solid fa-download"></i> Download File</button>
+                </div>
+
+                <div class="export-card"
+                    style="border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 10px; background: #f8fafc; transition: all 0.2s;"
+                    onmouseover="this.style.borderColor='var(--status-green)'; this.style.backgroundColor='#fff';"
+                    onmouseout="this.style.borderColor='#e2e8f0'; this.style.backgroundColor='#f8fafc';">
+                    <h4 style="color: var(--text-main); font-size: 1.1rem; font-weight: 700; margin: 0;"><i
+                            class="fa-solid fa-users" style="color: var(--status-green); margin-right: 8px;"></i>
+                        Employee Allocations History (.csv)</h4>
+                    <p style="color: var(--text-muted); font-size: 0.9rem; margin: 0; line-height: 1.4;">Downloads a
+                        detailed log showing which employee is assigned to which device, including the assignment dates,
+                        departments, and allocation status.</p>
+                    <button class="secondary-btn" onclick="exportData('allocations')"
+                        style="align-self: flex-start; margin-top: 5px; font-size: 0.85rem; padding: 8px 16px; color: var(--status-green); border-color: var(--status-green);"><i
+                            class="fa-solid fa-download"></i> Download File</button>
+                </div>
+
+                <div class="export-card"
+                    style="border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 10px; background: #f8fafc; transition: all 0.2s;"
+                    onmouseover="this.style.borderColor='var(--status-orange)'; this.style.backgroundColor='#fff';"
+                    onmouseout="this.style.borderColor='#e2e8f0'; this.style.backgroundColor='#f8fafc';">
+                    <h4 style="color: var(--text-main); font-size: 1.1rem; font-weight: 700; margin: 0;"><i
+                            class="fa-solid fa-rotate-left" style="color: var(--status-orange); margin-right: 8px;"></i>
+                        Returns & Repairs Ledger (.csv)</h4>
+                    <p style="color: var(--text-muted); font-size: 0.9rem; margin: 0; line-height: 1.4;">Downloads the
+                        complete history of all returned devices, including damage reports, missing accessories, and
+                        under-repair status updates.</p>
+                    <button class="secondary-btn" onclick="exportData('returns')"
+                        style="align-self: flex-start; margin-top: 5px; font-size: 0.85rem; padding: 8px 16px; color: var(--status-orange); border-color: var(--status-orange);"><i
+                            class="fa-solid fa-download"></i> Download File</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<script>
+    window.openModal = function (id) {
+        const modal = document.getElementById(id);
+        if (modal) {
+            modal.style.display = 'flex';
+            void modal.offsetWidth;
+            modal.style.opacity = '1';
+            const content = modal.querySelector('.modal-content');
+            if (content) content.style.transform = 'scale(1)';
+        }
+    };
+    window.closeModal = function (id) {
+        const modal = document.getElementById(id);
+        if (modal) {
+            modal.style.opacity = '0';
+            const content = modal.querySelector('.modal-content');
+            if (content) content.style.transform = 'scale(0.95)';
+            setTimeout(() => modal.style.display = 'none', 300);
+        }
+    };
+</script>
+</body>
+
+</html>
