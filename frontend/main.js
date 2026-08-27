@@ -516,11 +516,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 // 2. Hide unauthorized sidebar links
                 const navLinks = document.querySelectorAll('.nav-links li a');
                 navLinks.forEach(link => {
-                    const href = link.getAttribute('href');
-                    // TEMPORARILY DISABLED FOR TESTING: 
-                    // if (href && !allowedPages.includes(href)) {
-                    //     link.parentElement.style.display = 'none';
-                    // }
+                    const href = link.getAttribute('href')?.substring(1) + '.html'; // e.g. #assets -> assets.html
+                    const rawHref = link.getAttribute('href'); // e.g. #assets
+                    
+                    if (rawHref === '#index') return; // Dashboard always allowed
+                    
+                    if (href && !allowedPages.includes(href) && !allowedPages.includes('*')) {
+                        link.parentElement.style.display = 'none';
+                    } else {
+                        link.parentElement.style.display = 'block';
+                    }
                 });
             })
             .catch(err => {
@@ -544,10 +549,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 const navLinks = document.querySelectorAll('.nav-links li a');
                 navLinks.forEach(link => {
-                    const href = link.getAttribute('href');
-                    // if (href && !allowedPages.includes(href)) {
-                    //     link.parentElement.style.display = 'none';
-                    // }
+                    const href = link.getAttribute('href')?.substring(1) + '.html';
+                    const rawHref = link.getAttribute('href');
+                    
+                    if (rawHref === '#index') return;
+                    
+                    if (href && !allowedPages.includes(href) && !allowedPages.includes('*')) {
+                        link.parentElement.style.display = 'none';
+                    } else {
+                        link.parentElement.style.display = 'block';
+                    }
                 });
             });
 
