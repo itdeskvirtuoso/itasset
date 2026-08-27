@@ -1,5 +1,5 @@
 // --- AUTH.JS MERGED CONTENT ---
-var API_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:5000/api' : '/api';
+var API_URL = 'http://localhost:5000/api';
 
 document.addEventListener('DOMContentLoaded', () => {
     if (window.location.pathname.includes('auth.html') || window.location.pathname.endsWith('/frontend/') || window.location.pathname.endsWith('/frontend')) {
