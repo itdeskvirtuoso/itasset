@@ -656,15 +656,46 @@
                     <!-- Charts Section -->
                     <div class="charts-grid">
                         <div class="chart-card glass">
-                            <h3>Assets by Device Type</h3>
-                            <div style="position: relative; flex-grow: 1; width: 100%; min-height: 250px;">
+                            <h3><i class="fa-solid fa-chart-pie"></i> Assets by Device Type</h3>
+                            <div class="chart-container">
                                 <canvas id="deviceTypeChart"></canvas>
                             </div>
                         </div>
                         <div class="chart-card glass">
-                            <h3>Assets by Status</h3>
-                            <div style="position: relative; flex-grow: 1; width: 100%; min-height: 250px;">
+                            <h3><i class="fa-solid fa-chart-bar"></i> Assets by Status</h3>
+                            <div class="chart-container">
                                 <canvas id="statusChart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Advanced Analytics Charts (Idea 5 UI Upgrade) -->
+                    <div class="advanced-charts-grid"
+                        style="display: grid; grid-template-columns: 2fr 1fr; gap: 24px; margin: 24px; padding-bottom: 0;">
+                        <!-- Trend Line Chart -->
+                        <div class="chart-card glass" style="margin:0;">
+                            <h3><i class="fa-solid fa-chart-line"></i> Asset Lifecycle Trend</h3>
+                            <div class="chart-container" style="height: 280px;">
+                                <canvas id="trendChart"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- Gauges & Vertical Bars -->
+                        <div style="display: flex; flex-direction: column; gap: 24px;">
+                            <!-- Gauge -->
+                            <div class="chart-card glass" style="margin:0; flex: 1;">
+                                <h3><i class="fa-solid fa-gauge-high"></i> Stock Utilization</h3>
+                                <div class="chart-container" style="height: 120px;">
+                                    <canvas id="utilizationChart"></canvas>
+                                </div>
+                            </div>
+
+                            <!-- Slim Vertical Bar -->
+                            <div class="chart-card glass" style="margin:0; flex: 1;">
+                                <h3><i class="fa-solid fa-arrow-right-arrow-left"></i> Allocation Flow</h3>
+                                <div class="chart-container" style="height: 120px;">
+                                    <canvas id="flowChart"></canvas>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -740,7 +771,7 @@
                                             placeholder="Enter Software Category manually (e.g. Operating System, Design)">
                                     </div>
                                     <div class="form-group">
-                                        <label>Make & Model</label>
+                                        <label id="makeModelLabel">Make & Model</label>
                                         <input type="text" id="make" placeholder="e.g. Dell Latitude 5430">
                                     </div>
                                     <div class="form-group" style="display:none;">
@@ -834,8 +865,8 @@
                                             <option value="None">None</option>
                                         </select>
                                     </div>
-                                    <div class="form-group" style="display:none;"><label>MAC Address</label><input type="text" id="macAddress"
-                                            placeholder="AA:BB:CC:DD:EE:FF"></div>
+                                    <div class="form-group" style="display:none;"><label>MAC Address</label><input
+                                            type="text" id="macAddress" placeholder="AA:BB:CC:DD:EE:FF"></div>
                                 </div>
                             </div>
 
@@ -888,7 +919,8 @@
                             <div class="btn-group">
                                 <button type="reset" class="secondary-btn"><i class="fa-solid fa-rotate-right"></i>
                                     Reset</button>
-                                <button type="submit" class="primary-btn"><i class="fa-solid fa-floppy-disk"></i> Save
+                                <button type="submit" id="save-asset-btn" class="primary-btn"><i
+                                        class="fa-solid fa-floppy-disk"></i> Save
                                     Asset</button>
                             </div>
                         </form>
@@ -1336,8 +1368,11 @@
             <!-- ====== SETTINGS VIEW ====== -->
             <div id="view-settings" class="page-view" style="display:none;">
                 <div class="dashboard">
-                    <div class="dashboard-header">
+                    <div class="dashboard-header"
+                        style="display: flex; justify-content: space-between; align-items: center;">
                         <h1>System Settings & Access Control</h1>
+                        <button class="primary-btn" onclick="openUserManagementModal()"><i
+                                class="fa-solid fa-user-plus"></i> Add Login Access</button>
                     </div>
 
                     <div class="kpi-grid" style="grid-template-columns: 1fr;">
@@ -1366,43 +1401,79 @@
                         </div>
                     </div>
 
-                    <!-- User Management Section -->
-                    <div id="user-management-section" class="kpi-grid" style="grid-template-columns: 1fr; margin-top: 30px; display: none;">
-                        <div class="kpi-card glass" style="flex-direction: column; align-items: flex-start;">
-                            <h3 style="margin-bottom: 20px; border-bottom: 1px solid var(--border); padding-bottom: 10px; width: 100%;">
-                                User Management (Create New User)
-                            </h3>
-                            <p style="color: var(--text-muted); font-size: 0.95rem; margin-bottom: 24px;">
-                                Only Super Admins can register new users in the system.
-                            </p>
+                </div>
+            </div>
 
-                            <form id="internal-register-form" style="width: 100%; max-width: 600px;">
-                                <div class="form-group">
-                                    <label>Username *</label>
-                                    <input type="text" id="int-reg-username" required placeholder="Enter username (e.g., admin)" class="form-control">
-                                </div>
-                                <div class="form-group">
-                                    <label>Role *</label>
-                                    <select id="int-reg-role" required class="form-control">
-                                        <option value="" disabled selected>Select user role</option>
-                                        <option value="Super Admin">Super Admin</option>
-                                        <option value="Employee">Employee</option>
-                                    </select>
-                                </div>
-                                <div class="form-group">
-                                    <label>Password *</label>
-                                    <input type="password" id="int-reg-password" required placeholder="Create a password (min 6 chars)" class="form-control">
-                                </div>
-                                <div class="form-actions" style="margin-top: 20px;">
-                                    <button type="submit" class="primary-btn" id="int-reg-submit">
-                                        <i class="fa-solid fa-user-plus"></i> Create User
-                                    </button>
-                                </div>
-                            </form>
+            <!-- User Management Modal -->
+            <div id="user-management-modal" class="modal"
+                style="display: none; position: fixed; z-index: 99999; left: 0; top: 0; width: 100vw; height: 100vh; background-color: rgba(15, 23, 42, 0.7); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); justify-content: center; align-items: center; opacity: 0; transition: opacity 0.3s ease;">
+                <div class="modal-content"
+                    style="background: #f8f9fa; padding: 40px; border-radius: 30px; box-shadow: 20px 20px 60px #d1d5db, -20px -20px 60px #ffffff; width: 90%; max-width: 550px; position: relative; max-height: 90vh; overflow-y: auto; border: 1px solid #ffffff; transform: scale(0.95); transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
+                    <span class="close" onclick="closeUserManagementModal()"
+                        style="position: absolute; top: 25px; right: 30px; font-size: 32px; font-weight: 700; cursor: pointer; color: #9ca3af; text-shadow: 1px 1px 2px #fff; transition: all 0.2s;"
+                        onmouseover="this.style.color='#881337';"
+                        onmouseout="this.style.color='#9ca3af';">&times;</span>
+                    
+                    <div style="text-align: center; margin-bottom: 35px;">
+                        <div style="width: 80px; height: 80px; margin: 0 auto 20px auto; border-radius: 50%; background: #f8f9fa; box-shadow: 7px 7px 15px #d1d5db, -7px -7px 15px #ffffff; display: flex; align-items: center; justify-content: center; font-size: 2.2rem; color: #881337;">
+                            <i class="fa-solid fa-user-shield" style="text-shadow: 1px 1px 3px rgba(0,0,0,0.1);"></i>
                         </div>
+                        <h2 style="font-size: 1.8rem; color: #1f2937; font-weight: 800; margin: 0; text-shadow: 1px 1px 2px #fff; letter-spacing: -0.5px;">User Management</h2>
+                        <p style="color: #6b7280; font-size: 0.95rem; margin: 8px 0 0 0; font-weight: 500;">Only Super Admins can register new users.</p>
                     </div>
 
+                    <form id="internal-register-form" style="width: 100%;">
+                        <div style="display: flex; flex-direction: column; gap: 24px; margin-bottom: 35px;">
+                            
+                            <div class="form-group" style="display: flex; flex-direction: column; gap: 10px;">
+                                <label style="font-weight: 700; font-size: 0.85rem; color: #4b5563; padding-left: 5px; text-shadow: 1px 1px 1px #fff; text-transform: uppercase; letter-spacing: 0.5px;"><i class="fa-solid fa-user"
+                                        style="color: #881337; margin-right: 6px;"></i> Username</label>
+                                <input type="text" id="int-reg-username" required placeholder="Enter username"
+                                    style="padding: 16px 20px; background: #f8f9fa; box-shadow: inset 5px 5px 10px #d1d5db, inset -5px -5px 10px #ffffff; border: none; border-radius: 16px; font-family: 'Inter', sans-serif; font-size: 1rem; color: #1f2937; font-weight: 600; outline: none; transition: all 0.2s;"
+                                    onfocus="this.style.boxShadow='inset 7px 7px 14px #d1d5db, inset -7px -7px 14px #ffffff';"
+                                    onblur="this.style.boxShadow='inset 5px 5px 10px #d1d5db, inset -5px -5px 10px #ffffff';">
+                            </div>
+
+                            <div class="form-group" style="display: flex; flex-direction: column; gap: 10px;">
+                                <label style="font-weight: 700; font-size: 0.85rem; color: #4b5563; padding-left: 5px; text-shadow: 1px 1px 1px #fff; text-transform: uppercase; letter-spacing: 0.5px;"><i class="fa-solid fa-users-gear"
+                                        style="color: #881337; margin-right: 6px;"></i> Role</label>
+                                <select id="int-reg-role" required
+                                    style="padding: 16px 20px; background: #f8f9fa; box-shadow: inset 5px 5px 10px #d1d5db, inset -5px -5px 10px #ffffff; border: none; border-radius: 16px; font-family: 'Inter', sans-serif; font-size: 1rem; color: #1f2937; font-weight: 600; outline: none; transition: all 0.2s; cursor: pointer; -webkit-appearance: none; appearance: none;"
+                                    onfocus="this.style.boxShadow='inset 7px 7px 14px #d1d5db, inset -7px -7px 14px #ffffff';"
+                                    onblur="this.style.boxShadow='inset 5px 5px 10px #d1d5db, inset -5px -5px 10px #ffffff';">
+                                    <option value="" disabled selected>Select user role</option>
+                                    <option value="Super Admin">Super Admin</option>
+                                    <option value="Employee">Employee</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group" style="display: flex; flex-direction: column; gap: 10px;">
+                                <label style="font-weight: 700; font-size: 0.85rem; color: #4b5563; padding-left: 5px; text-shadow: 1px 1px 1px #fff; text-transform: uppercase; letter-spacing: 0.5px;"><i class="fa-solid fa-lock"
+                                        style="color: #881337; margin-right: 6px;"></i> Password</label>
+                                <input type="password" id="int-reg-password" required placeholder="Create a password"
+                                    style="padding: 16px 20px; background: #f8f9fa; box-shadow: inset 5px 5px 10px #d1d5db, inset -5px -5px 10px #ffffff; border: none; border-radius: 16px; font-family: 'Inter', sans-serif; font-size: 1rem; color: #1f2937; font-weight: 600; outline: none; transition: all 0.2s;"
+                                    onfocus="this.style.boxShadow='inset 7px 7px 14px #d1d5db, inset -7px -7px 14px #ffffff';"
+                                    onblur="this.style.boxShadow='inset 5px 5px 10px #d1d5db, inset -5px -5px 10px #ffffff';">
+                            </div>
+                        </div>
+
+                        <div style="display: flex; justify-content: center; gap: 24px;">
+                            <button type="button" onclick="closeUserManagementModal()"
+                                style="padding: 15px 32px; font-size: 1rem; font-weight: 700; color: #6b7280; background: #f8f9fa; border: none; border-radius: 16px; box-shadow: 6px 6px 12px #d1d5db, -6px -6px 12px #ffffff; cursor: pointer; transition: all 0.2s;"
+                                onmousedown="this.style.boxShadow='inset 4px 4px 8px #d1d5db, inset -4px -4px 8px #ffffff'; this.style.color='#4b5563';"
+                                onmouseup="this.style.boxShadow='6px 6px 12px #d1d5db, -6px -6px 12px #ffffff'; this.style.color='#6b7280';"
+                                onmouseleave="this.style.boxShadow='6px 6px 12px #d1d5db, -6px -6px 12px #ffffff'; this.style.color='#6b7280';">Cancel</button>
+                            <button type="submit" id="int-reg-submit"
+                                style="padding: 15px 38px; font-size: 1rem; font-weight: 800; color: #881337; background: #f8f9fa; border: none; border-radius: 16px; box-shadow: 6px 6px 12px #d1d5db, -6px -6px 12px #ffffff; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; gap: 10px;"
+                                onmousedown="this.style.boxShadow='inset 4px 4px 8px #d1d5db, inset -4px -4px 8px #ffffff'; this.style.color='#4c0519';"
+                                onmouseup="this.style.boxShadow='6px 6px 12px #d1d5db, -6px -6px 12px #ffffff'; this.style.color='#881337';"
+                                onmouseleave="this.style.boxShadow='6px 6px 12px #d1d5db, -6px -6px 12px #ffffff'; this.style.color='#881337';">
+                                <i class="fa-solid fa-check"></i> Create User
+                            </button>
+                        </div>
+                    </form>
                 </div>
+            </div>
 
         </main>
     </div>
@@ -1564,10 +1635,12 @@
                 <div class="form-grid"
                     style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 30px;">
                     <div class="form-group" style="display: flex; flex-direction: column; gap: 10px;">
-                                    <label style="font-size: 0.85rem; font-weight: 600; color: #475569; margin-bottom: 6px; display:block;">Username *</label>
-                                    <input type="text" id="prof-username" required
-                                        style="width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 10px; font-size: 0.95rem; outline:none; transition: all 0.2s; background: rgba(241,245,249,0.8); color: #64748b;"
-                                        readonly>
+                        <label
+                            style="font-size: 0.85rem; font-weight: 600; color: #475569; margin-bottom: 6px; display:block;">Username
+                            *</label>
+                        <input type="text" id="prof-username" required
+                            style="width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 10px; font-size: 0.95rem; outline:none; transition: all 0.2s; background: rgba(241,245,249,0.8); color: #64748b;"
+                            readonly>
                     </div>
 
                     <div class="form-group" style="display: flex; flex-direction: column; gap: 10px;">
@@ -1696,7 +1769,8 @@
                 <button onclick="clearKpiFilters()" class="secondary-btn"
                     style="padding: 8px 16px; font-size: 0.9rem;"><i class="fa-solid fa-rotate-left"></i> Reset</button>
                 <button onclick="exportKpiData()" class="primary-btn"
-                    style="padding: 8px 16px; font-size: 0.9rem; background: #10b981; border: none;"><i class="fa-solid fa-file-export"></i> Export</button>
+                    style="padding: 8px 16px; font-size: 0.9rem; background: #10b981; border: none;"><i
+                        class="fa-solid fa-file-export"></i> Export</button>
             </div>
 
             <div style="overflow-x: auto;">
@@ -1829,7 +1903,15 @@
                 <label
                     style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.95rem; color:#475569;"><input
                         type="checkbox" class="perm-checkbox" value="assets.html" style="width:18px;height:18px;"> Asset
-                    Master</label>
+                    Master (Add)</label>
+                <label
+                    style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.95rem; color:#475569;"><input
+                        type="checkbox" class="perm-checkbox" value="edit_asset" style="width:18px;height:18px;"> Edit
+                    Asset</label>
+                <label
+                    style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.95rem; color:#475569;"><input
+                        type="checkbox" class="perm-checkbox" value="delete_asset" style="width:18px;height:18px;">
+                    Delete Asset</label>
                 <label
                     style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.95rem; color:#475569;"><input
                         type="checkbox" class="perm-checkbox" value="allocations.html" style="width:18px;height:18px;">
@@ -1935,27 +2017,27 @@
         </div>
     </div>
 
-<script>
-    window.openModal = function (id) {
-        const modal = document.getElementById(id);
-        if (modal) {
-            modal.style.display = 'flex';
-            void modal.offsetWidth;
-            modal.style.opacity = '1';
-            const content = modal.querySelector('.modal-content');
-            if (content) content.style.transform = 'scale(1)';
-        }
-    };
-    window.closeModal = function (id) {
-        const modal = document.getElementById(id);
-        if (modal) {
-            modal.style.opacity = '0';
-            const content = modal.querySelector('.modal-content');
-            if (content) content.style.transform = 'scale(0.95)';
-            setTimeout(() => modal.style.display = 'none', 300);
-        }
-    };
-</script>
+    <script>
+        window.openModal = function (id) {
+            const modal = document.getElementById(id);
+            if (modal) {
+                modal.style.display = 'flex';
+                void modal.offsetWidth;
+                modal.style.opacity = '1';
+                const content = modal.querySelector('.modal-content');
+                if (content) content.style.transform = 'scale(1)';
+            }
+        };
+        window.closeModal = function (id) {
+            const modal = document.getElementById(id);
+            if (modal) {
+                modal.style.opacity = '0';
+                const content = modal.querySelector('.modal-content');
+                if (content) content.style.transform = 'scale(0.95)';
+                setTimeout(() => modal.style.display = 'none', 300);
+            }
+        };
+    </script>
 </body>
 
 </html>

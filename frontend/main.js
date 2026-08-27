@@ -502,6 +502,17 @@ document.addEventListener('DOMContentLoaded', () => {
             .then(roles => {
                 const roleObj = roles.find(r => r.name === userRole);
                 const allowedPages = roleObj ? roleObj.permissions : ['index.html'];
+                window.userPermissions = allowedPages;
+
+                // Enforce add_asset permission on Asset Master form
+                const saveAssetBtn = document.getElementById('save-asset-btn');
+                if (saveAssetBtn) {
+                    if (!allowedPages.includes('*') && !allowedPages.includes('assets.html')) {
+                        saveAssetBtn.style.display = 'none';
+                    } else {
+                        saveAssetBtn.style.display = 'inline-block';
+                    }
+                }
 
                 // 1. Check current page access
                 const currentPage = window.location.pathname.split('/').pop() || 'index.html';
@@ -518,9 +529,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 navLinks.forEach(link => {
                     const href = link.getAttribute('href')?.substring(1) + '.html'; // e.g. #assets -> assets.html
                     const rawHref = link.getAttribute('href'); // e.g. #assets
-                    
+
                     if (rawHref === '#index') return; // Dashboard always allowed
-                    
+
                     if (href && !allowedPages.includes(href) && !allowedPages.includes('*')) {
                         link.parentElement.style.display = 'none';
                     } else {
@@ -551,9 +562,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 navLinks.forEach(link => {
                     const href = link.getAttribute('href')?.substring(1) + '.html';
                     const rawHref = link.getAttribute('href');
-                    
+
                     if (rawHref === '#index') return;
-                    
+
                     if (href && !allowedPages.includes(href) && !allowedPages.includes('*')) {
                         link.parentElement.style.display = 'none';
                     } else {
@@ -678,6 +689,13 @@ async function initDashboard() {
         try {
             renderDeviceTypeChart(data.charts?.assetsByDeviceType || []);
             renderStatusChart(data.charts?.assetsByStatus || []);
+            
+            // Advanced Graphical Representations (Idea 5)
+            if (data.charts?.trendData) {
+                renderTrendChart(data.charts.trendData);
+                renderUtilizationChart(data.kpis?.inUse || 0, data.kpis?.totalAssets || 1);
+                renderFlowChart(data.charts.trendData);
+            }
         } catch (chartErr) {
             console.warn('Charts failed to render, possibly Chart.js is not loaded', chartErr);
         }
@@ -805,6 +823,176 @@ function renderStatusChart(data) {
                     ticks: { color: colors.text },
                     grid: { display: false, drawBorder: false }
                 }
+            }
+        }
+    });
+}
+
+// =======================================================
+// ADVANCED GRAPHICAL REPRESENTATIONS (CHART.JS)
+// =======================================================
+
+let trendChartInstance = null;
+let utilizationChartInstance = null;
+let flowChartInstance = null;
+
+function renderTrendChart(trendData) {
+    const ctx = document.getElementById('trendChart');
+    if (!ctx) return;
+    
+    if (trendChartInstance) trendChartInstance.destroy();
+    
+    trendChartInstance = new Chart(ctx.getContext('2d'), {
+        type: 'line',
+        data: {
+            labels: trendData.labels,
+            datasets: [
+                {
+                    label: 'Assets Added',
+                    data: trendData.added,
+                    borderColor: '#10B981', // green
+                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                    borderWidth: 3,
+                    tension: 0.4, // smooth cubic interpolation
+                    fill: true,
+                    pointRadius: 0,
+                    pointHoverRadius: 6
+                },
+                {
+                    label: 'Allocated',
+                    data: trendData.allocated,
+                    borderColor: '#3B82F6', // blue
+                    borderWidth: 3,
+                    tension: 0.4,
+                    fill: false,
+                    pointRadius: 0,
+                    pointHoverRadius: 6
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+                mode: 'index',
+                intersect: false,
+            },
+            plugins: {
+                legend: { position: 'top', labels: { usePointStyle: true, boxWidth: 8, font: {weight: '600'} } },
+                tooltip: {
+                    backgroundColor: 'rgba(15, 23, 42, 0.95)',
+                    titleColor: '#fff',
+                    bodyColor: '#e2e8f0',
+                    padding: 12,
+                    cornerRadius: 12
+                }
+            },
+            scales: {
+                x: { grid: { display: false, drawBorder: false } },
+                y: { grid: { color: '#E5E7EB', borderDash: [5, 5], drawBorder: false }, beginAtZero: true }
+            }
+        }
+    });
+}
+
+function renderUtilizationChart(inUse, total) {
+    const ctx = document.getElementById('utilizationChart');
+    if (!ctx) return;
+    
+    if (utilizationChartInstance) utilizationChartInstance.destroy();
+    
+    const percentage = total > 0 ? Math.round((inUse / total) * 100) : 0;
+    
+    // Inline plugin to draw percentage in center of gauge
+    const gaugeTextPlugin = {
+        id: 'gaugeText',
+        beforeDraw(chart) {
+            const { ctx, width, height } = chart;
+            ctx.restore();
+            ctx.font = '800 24px Outfit, sans-serif';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = '#1e293b';
+            const text = `${percentage}%`;
+            const textX = Math.round((width - ctx.measureText(text).width) / 2);
+            const textY = height - 10;
+            ctx.fillText(text, textX, textY);
+            ctx.save();
+        }
+    };
+    
+    utilizationChartInstance = new Chart(ctx.getContext('2d'), {
+        type: 'doughnut',
+        data: {
+            labels: ['In Use', 'Available'],
+            datasets: [{
+                data: [inUse, total - inUse],
+                backgroundColor: ['#3B82F6', '#E5E7EB'],
+                borderWidth: 0,
+                borderRadius: [10, 0] // Only round the active part
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            rotation: 270, // Start at left
+            circumference: 180, // Half circle
+            cutout: '75%',
+            plugins: {
+                legend: { display: false },
+                tooltip: { enabled: false } // clean look
+            },
+            animation: { animateScale: true, animateRotate: true, duration: 1500, easing: 'easeOutQuart' }
+        },
+        plugins: [gaugeTextPlugin]
+    });
+}
+
+function renderFlowChart(trendData) {
+    const ctx = document.getElementById('flowChart');
+    if (!ctx) return;
+    
+    if (flowChartInstance) flowChartInstance.destroy();
+    
+    flowChartInstance = new Chart(ctx.getContext('2d'), {
+        type: 'bar',
+        data: {
+            labels: trendData.labels,
+            datasets: [
+                {
+                    label: 'Allocated',
+                    data: trendData.allocated,
+                    backgroundColor: '#F59E0B', // orange
+                    borderRadius: 50,
+                    borderWidth: 0,
+                    barPercentage: 0.3,
+                    categoryPercentage: 0.5
+                },
+                {
+                    label: 'Returned',
+                    data: trendData.returned,
+                    backgroundColor: '#E11D48', // red
+                    borderRadius: 50,
+                    borderWidth: 0,
+                    barPercentage: 0.3,
+                    categoryPercentage: 0.5
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false }, // slim look
+                tooltip: {
+                    backgroundColor: 'rgba(15, 23, 42, 0.95)',
+                    titleColor: '#fff',
+                    bodyColor: '#e2e8f0',
+                    cornerRadius: 8
+                }
+            },
+            scales: {
+                x: { grid: { display: false, drawBorder: false } },
+                y: { display: false, beginAtZero: true } // hide y axis entirely for cleaner look
             }
         }
     });
@@ -986,11 +1174,15 @@ deviceTypeSelect.addEventListener('change', (e) => {
         softwareCategoryGroup.style.display = 'block';
         serialNumberLabel.textContent = 'Software License Key *';
         document.getElementById('serialNumber').placeholder = 'XXXX-XXXX-XXXX-XXXX';
+        const makeModelLabel = document.getElementById('makeModelLabel');
+        if (makeModelLabel) makeModelLabel.textContent = 'Software Name';
     } else {
         softwareCategoryGroup.style.display = 'none';
         document.getElementById('softwareCategory').value = '';
         serialNumberLabel.textContent = 'Serial Number *';
         document.getElementById('serialNumber').placeholder = '';
+        const makeModelLabel = document.getElementById('makeModelLabel');
+        if (makeModelLabel) makeModelLabel.textContent = 'Make & Model';
     }
 
     // Hide Configuration Details for accessories/software
@@ -1475,7 +1667,7 @@ async function fetchReportsData() {
                 return match;
             });
         }
-        
+
         window.currentReportsFilteredData = filtered;
 
         if (!filtered || filtered.length === 0) {
@@ -1504,8 +1696,8 @@ async function fetchReportsData() {
                     '<td style="padding:16px; color: var(--text-main); font-weight: 500;"><i class="fa-solid fa-user-circle" style="color: #cbd5e1; margin-right: 5px;"></i>' + (asset.assignedToName || 'Unassigned') + '</td>' +
                     '<td style="padding:16px;">' + (asset.employeeId || '-') + '</td>' +
                     '<td style="padding:16px;">' +
-                    `<button onclick="openEditModal('${asset._id}')" style="background:none;border:none;color:var(--primary);cursor:pointer;margin-right:12px;font-size:1.1rem;transition:0.2s;" onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'"><i class="fa-solid fa-pen"></i></button>` +
-                    `<button onclick="deleteAsset('${asset._id}')" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:1.1rem;transition:0.2s;" onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'"><i class="fa-solid fa-trash"></i></button>` +
+                    ((window.userPermissions && (window.userPermissions.includes('*') || window.userPermissions.includes('edit_asset'))) ? `<button onclick="openEditModal('${asset._id}')" style="background:none;border:none;color:var(--primary);cursor:pointer;margin-right:12px;font-size:1.1rem;transition:0.2s;" onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'"><i class="fa-solid fa-pen"></i></button>` : '') +
+                    ((window.userPermissions && (window.userPermissions.includes('*') || window.userPermissions.includes('delete_asset'))) ? `<button onclick="deleteAsset('${asset._id}')" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:1.1rem;transition:0.2s;" onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'"><i class="fa-solid fa-trash"></i></button>` : '') +
                     '</td>';
                 tbody.appendChild(row);
             } catch (err) { console.error('Error rendering row for asset', asset, err); }
@@ -1585,7 +1777,7 @@ var rolesCache = {};
 
 function fetchSettingsData() {
     fetchRoles();
-    
+
     // User Management visibility
     const userStr = localStorage.getItem('user');
     if (userStr) {
@@ -1626,7 +1818,7 @@ document.addEventListener('DOMContentLoaded', () => {
             try {
                 const response = await fetch(API_URL + '/auth/register', {
                     method: 'POST',
-                    headers: { 
+                    headers: {
                         'Content-Type': 'application/json',
                         'Authorization': 'Bearer ' + token
                     },
@@ -1867,7 +2059,7 @@ window.openKpiModal = async function (category) {
                         (a.issueNotes || '').toLowerCase().includes(filterSearch);
                 });
             }
-            
+
             window.currentKpiFilteredData = activeAllocs;
 
             if (activeAllocs.length === 0) {
@@ -1941,7 +2133,7 @@ window.openKpiModal = async function (category) {
                         (a.deviceCondition || '').toLowerCase().includes(filterSearch);
                 });
             }
-            
+
             window.currentKpiFilteredData = filteredReturns;
 
             if (filteredReturns.length === 0) {
@@ -1985,9 +2177,9 @@ window.openKpiModal = async function (category) {
             <tr>
                 <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">SR No</th>
                 <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Asset Tag</th>
-                <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Serial/Key</th>
+                <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">${isSoftware ? 'Software License Key' : 'Serial/Key'}</th>
                 ${!isSoftware ? '<th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Device Type</th>' : ''}
-                <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Make & Model</th>
+                <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">${isSoftware ? 'Software Name' : 'Make & Model'}</th>
                 <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Assign Date</th>
                 <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Valid Date</th>
                 <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Remark</th>
@@ -2032,7 +2224,7 @@ window.openKpiModal = async function (category) {
                 return match;
             });
         }
-        
+
         window.currentKpiFilteredData = filtered;
 
         tbody.innerHTML = '';
@@ -2061,8 +2253,8 @@ window.openKpiModal = async function (category) {
                 <td style="padding: 12px 16px; color: var(--text-main); font-weight: 500;"><i class="fa-solid fa-user-circle" style="color: #cbd5e1; margin-right: 5px;"></i>${asset.assignedToName || 'Unassigned'}</td>
                 <td style="padding: 12px 16px;">${asset.employeeId || '-'}</td>
                 <td style="padding: 12px 16px;">
-                    <button onclick="openEditModal('${asset._id}')" style="background:none;border:none;color:var(--primary);cursor:pointer;margin-right:12px;font-size:1.1rem;transition:0.2s;" onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'"><i class="fa-solid fa-pen"></i></button>
-                    <button onclick="deleteAsset('${asset._id}')" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:1.1rem;transition:0.2s;" onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'"><i class="fa-solid fa-trash"></i></button>
+                    ${(window.userPermissions && (window.userPermissions.includes('*') || window.userPermissions.includes('edit_asset'))) ? `<button onclick="openEditModal('${asset._id}')" style="background:none;border:none;color:var(--primary);cursor:pointer;margin-right:12px;font-size:1.1rem;transition:0.2s;" onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'"><i class="fa-solid fa-pen"></i></button>` : ''}
+                    ${(window.userPermissions && (window.userPermissions.includes('*') || window.userPermissions.includes('delete_asset'))) ? `<button onclick="deleteAsset('${asset._id}')" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:1.1rem;transition:0.2s;" onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'"><i class="fa-solid fa-trash"></i></button>` : ''}
                 </td>
             `;
             tbody.appendChild(tr);
@@ -2753,7 +2945,7 @@ window.closeModal = function (id) { const modal = document.getElementById(id); i
 window.exportKpiData = function () {
     const data = window.currentKpiFilteredData;
     if (!data || data.length === 0) {
-        if(window.showToast) window.showToast('No data available to export.', 'warning');
+        if (window.showToast) window.showToast('No data available to export.', 'warning');
         return;
     }
 
@@ -2810,7 +3002,7 @@ window.exportKpiData = function () {
             }
             return cellStr;
         }).join(",");
-        
+
         csvContent += rowStr + "\n";
     });
 
@@ -2824,15 +3016,15 @@ window.exportKpiData = function () {
     document.body.removeChild(link);
 };
 
-window.exportReportsToPDF = function() {
+window.exportReportsToPDF = function () {
     const data = window.currentReportsFilteredData;
     if (!data || data.length === 0) {
-        if(window.showToast) window.showToast('No data available to export.', 'warning');
+        if (window.showToast) window.showToast('No data available to export.', 'warning');
         return;
     }
 
     if (!window.jspdf || !window.jspdf.jsPDF) {
-        if(window.showToast) window.showToast('PDF Library not loaded yet. Please wait a moment.', 'error');
+        if (window.showToast) window.showToast('PDF Library not loaded yet. Please wait a moment.', 'error');
         return;
     }
 
@@ -2842,7 +3034,7 @@ window.exportReportsToPDF = function() {
     doc.setFontSize(18);
     doc.setTextColor(15, 23, 42);
     doc.text("Asset Inventory Report", 14, 22);
-    
+
     doc.setFontSize(11);
     doc.setTextColor(100, 116, 139);
     doc.text("Generated on: " + new Date().toLocaleString(), 14, 30);
@@ -2877,3 +3069,80 @@ window.exportReportsToPDF = function() {
     doc.save(filename);
 };
 
+
+window.exportReportsToPDF = function () {
+    const data = window.currentReportsFilteredData;
+    if (!data || data.length === 0) {
+        if (window.showToast) window.showToast('No data available to export.', 'warning');
+        return;
+    }
+
+    if (!window.jspdf || !window.jspdf.jsPDF) {
+        if (window.showToast) window.showToast('PDF Library not loaded yet. Please wait a moment.', 'error');
+        return;
+    }
+
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'landscape' });
+
+    doc.setFontSize(18);
+    doc.setTextColor(15, 23, 42);
+    doc.text("Asset Inventory Report", 14, 22);
+
+    doc.setFontSize(11);
+    doc.setTextColor(100, 116, 139);
+    doc.text("Generated on: " + new Date().toLocaleString(), 14, 30);
+
+    const headers = [['SR No', 'Asset Tag', 'Serial/Key', 'Device Type', 'Make & Model', 'Assign Date', 'Valid Date', 'Remark', 'Status', 'Assign Name', 'Emp ID']];
+    const body = data.map(item => [
+        item.srNo || '-',
+        item.assetTagNumber || '-',
+        item.serialNumber || '-',
+        item.deviceType || '-',
+        (item.make || '') + ' ' + (item.model || ''),
+        item.purchaseDate ? new Date(item.purchaseDate).toLocaleDateString() : '-',
+        item.warrantyEndDate ? new Date(item.warrantyEndDate).toLocaleDateString() : '-',
+        item.remark || '-',
+        item.status || '-',
+        item.assignedToName || 'Unassigned',
+        item.employeeId || '-'
+    ]);
+
+    doc.autoTable({
+        head: headers,
+        body: body,
+        startY: 35,
+        theme: 'grid',
+        styles: { fontSize: 8, cellPadding: 3, textColor: [51, 65, 85] },
+        headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold' },
+        alternateRowStyles: { fillColor: [248, 250, 252] },
+        margin: { top: 35 }
+    });
+
+    const filename = 'Asset_Report_' + new Date().toISOString().split('T')[0] + '.pdf';
+    doc.save(filename);
+};
+
+
+// =======================================================
+// USER MANAGEMENT MODAL
+// =======================================================
+function openUserManagementModal() {
+    const modal = document.getElementById('user-management-modal');
+    if (modal) {
+        modal.style.display = 'flex';
+        // Trigger opacity transition
+        setTimeout(() => { modal.style.opacity = '1'; }, 10);
+    }
+}
+
+function closeUserManagementModal() {
+    const modal = document.getElementById('user-management-modal');
+    if (modal) {
+        modal.style.opacity = '0';
+        setTimeout(() => {
+            modal.style.display = 'none';
+            document.getElementById('internal-register-form').reset();
+        }, 300);
+    }
+}

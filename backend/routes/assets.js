@@ -464,6 +464,60 @@ router.get('/dashboard-stats', async (req, res) => {
     const recentAllocations = await Allocation.find(recentAllocationsQuery).sort({ assignDate: -1 }).limit(5).select('employeeName assetTagNumber assignDate expectedReturnDate issueNotes');
     const recentReturns = await Return.find(recentReturnsQuery).sort({ returnDate: -1 }).limit(5).select('assetTagNumber employeeName deviceCondition returnDate penaltyAmount notes');
 
+    // Live 6-month trend data for advanced graphical representation
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const d = new Date();
+    const trendLabels = [];
+    const monthIndexes = []; // Store actual month indices to match data
+
+    for (let i = 5; i >= 0; i--) {
+        const d2 = new Date();
+        d2.setMonth(d.getMonth() - i);
+        trendLabels.push(monthNames[d2.getMonth()]);
+        monthIndexes.push(d2.getMonth()); // Keep track of the month index (0-11) for this column
+    }
+
+    // Date boundary: 1st day of the month, 5 months ago (so it covers the current month + 5 previous)
+    const sixMonthsAgo = new Date();
+    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 5);
+    sixMonthsAgo.setDate(1);
+    sixMonthsAgo.setHours(0, 0, 0, 0);
+
+    // Fetch live raw data for the last 6 months
+    const liveAddedAssets = await Asset.find({ ...baseFilter, createdAt: { $gte: sixMonthsAgo } }).select('createdAt');
+    const liveAllocations = await Allocation.find({ ...recentAllocationsQuery, assignDate: { $gte: sixMonthsAgo } }).select('assignDate');
+    const liveReturns = await Return.find({ ...recentReturnsQuery, returnDate: { $gte: sixMonthsAgo } }).select('returnDate');
+
+    // Initialize counts arrays with 0s
+    const addedCounts = [0, 0, 0, 0, 0, 0];
+    const allocatedCounts = [0, 0, 0, 0, 0, 0];
+    const returnedCounts = [0, 0, 0, 0, 0, 0];
+
+    // Helper to bucket data by month
+    const bucketData = (dataArray, dateField, targetArray) => {
+        dataArray.forEach(item => {
+            if (item[dateField]) {
+                const itemMonth = new Date(item[dateField]).getMonth();
+                // Find where this month sits in our rolling 6-month window
+                const index = monthIndexes.lastIndexOf(itemMonth);
+                if (index !== -1) {
+                    targetArray[index]++;
+                }
+            }
+        });
+    };
+
+    bucketData(liveAddedAssets, 'createdAt', addedCounts);
+    bucketData(liveAllocations, 'assignDate', allocatedCounts);
+    bucketData(liveReturns, 'returnDate', returnedCounts);
+
+    const trendData = {
+        labels: trendLabels,
+        added: addedCounts,
+        allocated: allocatedCounts,
+        returned: returnedCounts
+    };
+
     res.json({
       kpis: {
         totalAssets,
@@ -475,7 +529,8 @@ router.get('/dashboard-stats', async (req, res) => {
       },
       charts: {
         assetsByDeviceType,
-        assetsByStatus
+        assetsByStatus,
+        trendData
       },
       recentActivities,
       recentAllocations,

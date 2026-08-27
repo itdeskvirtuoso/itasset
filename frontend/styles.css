@@ -651,37 +651,37 @@ body {
     align-items: center;
     gap: 8px;
     cursor: pointer;
-    padding: 2px 12px 2px 4px;
+    padding: 4px 12px 4px 6px;
     border-radius: 50px;
-    background: transparent;
-    transition: all 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    background: rgba(255, 255, 255, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
     position: relative;
-    transform-style: preserve-3d;
-    transform: perspective(800px) translateZ(0);
+    backdrop-filter: blur(8px);
 }
 
 .user-profile:hover {
-    background: rgba(255, 255, 255, 0.9);
-    transform: perspective(800px) translateY(-5px) rotateX(15deg) rotateY(-10deg) scale(1.05);
-    box-shadow:
-        -10px 15px 25px rgba(168, 85, 247, 0.3),
-        inset 0 0 0 1px rgba(255, 255, 255, 0.8);
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid rgba(168, 85, 247, 0.3);
+    box-shadow: 0 5px 15px rgba(168, 85, 247, 0.15), 0 2px 5px rgba(0, 0, 0, 0.05);
+    transform: translateY(-2px);
 }
 
 #user-avatar {
-    width: 34px;
-    height: 34px;
+    width: 36px;
+    height: 36px;
     border-radius: 50%;
     object-fit: cover;
-    box-shadow: 0 3px 8px rgba(168, 85, 247, 0.3);
-    border: 2px solid rgba(255, 255, 255, 0.9);
-    transition: all 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-    transform: translateZ(0);
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+    border: 2px solid transparent;
+    transition: all 0.3s ease;
 }
 
 .user-profile:hover #user-avatar {
-    transform: translateZ(30px) scale(1.15) rotate(10deg);
-    box-shadow: -5px 15px 20px rgba(168, 85, 247, 0.6);
+    transform: scale(1.05);
+    border-color: #a855f7;
+    box-shadow: 0 4px 10px rgba(168, 85, 247, 0.3);
 }
 
 .user-profile span {
@@ -885,26 +885,24 @@ body {
     letter-spacing: -0.5px;
     font-weight: 900;
     position: relative;
-    
+
     /* 1. Liquid Glass Aurora Background */
-    background: linear-gradient(
-        110deg,
-        #ffffff 0%,
-        #ffffff 20%,
-        #00f2fe 30%,
-        #4facfe 40%,
-        #ff0844 50%,
-        #ffb199 60%,
-        #ffffff 70%,
-        #ffffff 100%
-    );
+    background: linear-gradient(110deg,
+            #ffffff 0%,
+            #ffffff 20%,
+            #00f2fe 30%,
+            #4facfe 40%,
+            #ff0844 50%,
+            #ffb199 60%,
+            #ffffff 70%,
+            #ffffff 100%);
     background-size: 300% auto;
     color: transparent;
     -webkit-background-clip: text;
     background-clip: text;
-    
+
     /* 2. Animations */
-    animation: 
+    animation:
         auroraLiquidFlow 4s linear infinite,
         hologramLaserBlink 6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
     display: inline-block;
@@ -919,7 +917,7 @@ body {
     width: 10px;
     height: 100%;
     background: #fff;
-    box-shadow: 
+    box-shadow:
         0 0 10px #fff,
         0 0 20px #00f2fe,
         0 0 40px #ff0844;
@@ -932,47 +930,63 @@ body {
 }
 
 @keyframes auroraLiquidFlow {
-    0% { background-position: 300% center; }
-    100% { background-position: -300% center; }
+    0% {
+        background-position: 300% center;
+    }
+
+    100% {
+        background-position: -300% center;
+    }
 }
 
 @keyframes laserBeamSweep {
-    0%, 75%, 100% {
+
+    0%,
+    75%,
+    100% {
         left: -20%;
         opacity: 0;
     }
+
     82% {
         opacity: 0;
     }
+
     83% {
         opacity: 1;
         left: -10%;
     }
+
     88% {
         left: 110%;
         opacity: 1;
     }
+
     89% {
         opacity: 0;
     }
 }
 
 @keyframes hologramLaserBlink {
-    0%, 80%, 100% {
+
+    0%,
+    80%,
+    100% {
         opacity: 1;
         filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.1));
     }
+
     82% {
         opacity: 0.6;
         filter: drop-shadow(0 0 10px rgba(0, 242, 254, 0.5));
     }
+
     85% {
         opacity: 1;
-        filter: 
-            drop-shadow(0 0 10px rgba(255, 255, 255, 1))
-            drop-shadow(0 0 20px rgba(0, 242, 254, 1))
-            drop-shadow(0 0 40px rgba(255, 8, 68, 0.8));
+        filter:
+            drop-shadow(0 0 10px rgba(255, 255, 255, 1)) drop-shadow(0 0 20px rgba(0, 242, 254, 1)) drop-shadow(0 0 40px rgba(255, 8, 68, 0.8));
     }
+
     88% {
         opacity: 0.8;
         filter: drop-shadow(0 0 15px rgba(255, 177, 153, 0.6));
