@@ -1593,7 +1593,7 @@ document.addEventListener('DOMContentLoaded', () => {
         intRegForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             const name = document.getElementById('int-reg-name').value;
-            const email = document.getElementById('int-reg-email').value;
+            const username = document.getElementById('int-reg-username').value;
             const role = document.getElementById('int-reg-role').value;
             const password = document.getElementById('int-reg-password').value;
             const btn = document.getElementById('int-reg-submit');
@@ -1616,7 +1616,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         'Content-Type': 'application/json',
                         'Authorization': 'Bearer ' + token
                     },
-                    body: JSON.stringify({ name, email, role, password })
+                    body: JSON.stringify({ name, username, role, password })
                 });
 
                 const data = await response.json();

@@ -15,7 +15,7 @@ router.post('/register', auth, async (req, res) => {
       return res.status(403).json({ message: 'Only Super Admin can register new users.' });
     }
 
-    const { name, email, password, role } = req.body;
+    const { name, username, password, role } = req.body;
 
     // Validate role
     const validRoles = ['Super Admin', 'User 1', 'User 2', 'Employee'];
@@ -24,7 +24,7 @@ router.post('/register', auth, async (req, res) => {
     }
 
     // Check if user exists
-    let user = await User.findOne({ email });
+    let user = await User.findOne({ username });
     if (user) {
       return res.status(400).json({ message: 'User already exists.' });
     }
@@ -32,7 +32,7 @@ router.post('/register', auth, async (req, res) => {
     // Create new user instance
     user = new User({
       name,
-      email,
+      username,
       password,
       role
     });
@@ -48,7 +48,7 @@ router.post('/register', auth, async (req, res) => {
       user: {
         id: user.id,
         name: user.name,
-        email: user.email,
+        username: user.username,
         role: user.role
       }
     };
@@ -74,10 +74,10 @@ router.post('/register', auth, async (req, res) => {
 // @access  Public
 router.post('/login', async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { username, password } = req.body;
 
     // Check if user exists
-    let user = await User.findOne({ email });
+    let user = await User.findOne({ username });
     if (!user) {
       return res.status(400).json({ message: 'Invalid credentials.' });
     }
@@ -97,7 +97,7 @@ router.post('/login', async (req, res) => {
       user: {
         id: user.id,
         name: user.name,
-        email: user.email,
+        username: user.username,
         role: user.role
       }
     };

@@ -36,13 +36,13 @@ mongoose.connect(MONGODB_URI)
 
       const User = require('./models/User');
       const bcrypt = require('bcryptjs');
-      const superadmin = await User.findOne({ email: 'superadmin@gmail.com' });
+      const superadmin = await User.findOne({ username: 'admin' });
       if (!superadmin) {
         const salt = await bcrypt.genSalt(10);
-        const hashedPassword = await bcrypt.hash('vpel@26', salt);
+        const hashedPassword = await bcrypt.hash('*VPEL@26#', salt);
         await User.create({
           name: 'Super Administrator',
-          email: 'superadmin@gmail.com',
+          username: 'admin',
           password: hashedPassword,
           role: 'Super Admin'
         });
