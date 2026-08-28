@@ -29,4 +29,12 @@ const AssetSchema = new mongoose.Schema({
     remark: { type: String }
 }, { timestamps: true });
 
+// Add performance indexes
+AssetSchema.index({ status: 1 });
+AssetSchema.index({ deviceType: 1 });
+AssetSchema.index({ ownership: 1 });
+AssetSchema.index({ assignedToName: 1 });
+AssetSchema.index({ employeeId: 1 });
+AssetSchema.index({ serialNumber: 1 });
+
 module.exports = mongoose.model('Asset', AssetSchema);

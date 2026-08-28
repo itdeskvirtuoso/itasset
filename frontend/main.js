@@ -1,7 +1,44 @@
-
 // ==========================================
 // SPA ROUTER LOGIC
 // ==========================================
+
+// Global Smart Cache for Fetch API
+(function() {
+    const originalFetch = window.fetch;
+    const cache = new Map();
+    const CACHE_TTL = 60000; // 60 seconds
+
+    window.fetch = async function(url, options = {}) {
+        const isGet = !options.method || options.method.toUpperCase() === 'GET';
+        const noCache = options.cache === 'no-store' || (typeof url === 'string' && url.includes('_t='));
+        
+        // If it's a GET request to our API, use cache
+        if (isGet && !noCache && typeof url === 'string' && url.includes('/api/')) {
+            const cacheKey = url;
+            const cached = cache.get(cacheKey);
+            
+            if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
+                return cached.response.clone(); // Return cached response
+            }
+            
+            const response = await originalFetch(url, options);
+            if (response.ok) {
+                cache.set(cacheKey, {
+                    response: response.clone(),
+                    timestamp: Date.now()
+                });
+            }
+            return response;
+        }
+        
+        // If it's a mutation (POST, PUT, DELETE), clear the cache
+        if (options.method && ['POST', 'PUT', 'DELETE'].includes(options.method.toUpperCase())) {
+            cache.clear();
+        }
+        
+        return originalFetch(url, options);
+    };
+})();
 
 function handleRouting() {
     let hash = window.location.hash || '#index';

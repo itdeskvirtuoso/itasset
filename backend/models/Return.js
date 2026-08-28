@@ -10,4 +10,8 @@ const ReturnSchema = new mongoose.Schema({
     notes: { type: String }
 }, { timestamps: true });
 
+// Add performance indexes
+ReturnSchema.index({ assetTagNumber: 1 });
+ReturnSchema.index({ employeeName: 1 });
+
 module.exports = mongoose.model('Return', ReturnSchema);

@@ -42,10 +42,10 @@ router.post('/', async (req, res) => {
 // GET all active allocations
 router.get('/', async (req, res) => {
   try {
-    let allocations = await Allocation.find().sort({ assignDate: -1 });
+    let allocations = await Allocation.find().sort({ assignDate: -1 }).lean();
 
     if (req.query.ownership && req.query.ownership !== 'All') {
-      const assets = await Asset.find({ ownership: req.query.ownership }).select('assetTagNumber');
+      const assets = await Asset.find({ ownership: req.query.ownership }).select('assetTagNumber').lean();
       const validAssetTags = assets.map(a => a.assetTagNumber);
       allocations = allocations.filter(alloc => validAssetTags.includes(alloc.assetTagNumber));
     }

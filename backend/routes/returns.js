@@ -63,10 +63,10 @@ router.post('/', async (req, res) => {
 // GET all returns
 router.get('/', async (req, res) => {
   try {
-    let returns = await Return.find().sort({ returnDate: -1 });
+    let returns = await Return.find().sort({ returnDate: -1 }).lean();
 
     if (req.query.ownership && req.query.ownership !== 'All') {
-      const assets = await Asset.find({ ownership: req.query.ownership }).select('assetTagNumber');
+      const assets = await Asset.find({ ownership: req.query.ownership }).select('assetTagNumber').lean();
       const validAssetTags = assets.map(a => a.assetTagNumber);
       returns = returns.filter(ret => validAssetTags.includes(ret.assetTagNumber));
     }

@@ -1413,21 +1413,27 @@
                         style="position: absolute; top: 25px; right: 30px; font-size: 32px; font-weight: 700; cursor: pointer; color: #9ca3af; text-shadow: 1px 1px 2px #fff; transition: all 0.2s;"
                         onmouseover="this.style.color='#881337';"
                         onmouseout="this.style.color='#9ca3af';">&times;</span>
-                    
+
                     <div style="text-align: center; margin-bottom: 35px;">
-                        <div style="width: 80px; height: 80px; margin: 0 auto 20px auto; border-radius: 50%; background: #f8f9fa; box-shadow: 7px 7px 15px #d1d5db, -7px -7px 15px #ffffff; display: flex; align-items: center; justify-content: center; font-size: 2.2rem; color: #881337;">
+                        <div
+                            style="width: 80px; height: 80px; margin: 0 auto 20px auto; border-radius: 50%; background: #f8f9fa; box-shadow: 7px 7px 15px #d1d5db, -7px -7px 15px #ffffff; display: flex; align-items: center; justify-content: center; font-size: 2.2rem; color: #881337;">
                             <i class="fa-solid fa-user-shield" style="text-shadow: 1px 1px 3px rgba(0,0,0,0.1);"></i>
                         </div>
-                        <h2 style="font-size: 1.8rem; color: #1f2937; font-weight: 800; margin: 0; text-shadow: 1px 1px 2px #fff; letter-spacing: -0.5px;">User Management</h2>
-                        <p style="color: #6b7280; font-size: 0.95rem; margin: 8px 0 0 0; font-weight: 500;">Only Super Admins can register new users.</p>
+                        <h2
+                            style="font-size: 1.8rem; color: #1f2937; font-weight: 800; margin: 0; text-shadow: 1px 1px 2px #fff; letter-spacing: -0.5px;">
+                            User Management</h2>
+                        <p style="color: #6b7280; font-size: 0.95rem; margin: 8px 0 0 0; font-weight: 500;">Only Super
+                            Admins can register new users.</p>
                     </div>
 
                     <form id="internal-register-form" style="width: 100%;">
                         <div style="display: flex; flex-direction: column; gap: 24px; margin-bottom: 35px;">
-                            
+
                             <div class="form-group" style="display: flex; flex-direction: column; gap: 10px;">
-                                <label style="font-weight: 700; font-size: 0.85rem; color: #4b5563; padding-left: 5px; text-shadow: 1px 1px 1px #fff; text-transform: uppercase; letter-spacing: 0.5px;"><i class="fa-solid fa-user"
-                                        style="color: #881337; margin-right: 6px;"></i> Username</label>
+                                <label
+                                    style="font-weight: 700; font-size: 0.85rem; color: #4b5563; padding-left: 5px; text-shadow: 1px 1px 1px #fff; text-transform: uppercase; letter-spacing: 0.5px;"><i
+                                        class="fa-solid fa-user" style="color: #881337; margin-right: 6px;"></i>
+                                    Username</label>
                                 <input type="text" id="int-reg-username" required placeholder="Enter username"
                                     style="padding: 16px 20px; background: #f8f9fa; box-shadow: inset 5px 5px 10px #d1d5db, inset -5px -5px 10px #ffffff; border: none; border-radius: 16px; font-family: 'Inter', sans-serif; font-size: 1rem; color: #1f2937; font-weight: 600; outline: none; transition: all 0.2s;"
                                     onfocus="this.style.boxShadow='inset 7px 7px 14px #d1d5db, inset -7px -7px 14px #ffffff';"
@@ -1435,8 +1441,10 @@
                             </div>
 
                             <div class="form-group" style="display: flex; flex-direction: column; gap: 10px;">
-                                <label style="font-weight: 700; font-size: 0.85rem; color: #4b5563; padding-left: 5px; text-shadow: 1px 1px 1px #fff; text-transform: uppercase; letter-spacing: 0.5px;"><i class="fa-solid fa-users-gear"
-                                        style="color: #881337; margin-right: 6px;"></i> Role</label>
+                                <label
+                                    style="font-weight: 700; font-size: 0.85rem; color: #4b5563; padding-left: 5px; text-shadow: 1px 1px 1px #fff; text-transform: uppercase; letter-spacing: 0.5px;"><i
+                                        class="fa-solid fa-users-gear" style="color: #881337; margin-right: 6px;"></i>
+                                    Role</label>
                                 <select id="int-reg-role" required
                                     style="padding: 16px 20px; background: #f8f9fa; box-shadow: inset 5px 5px 10px #d1d5db, inset -5px -5px 10px #ffffff; border: none; border-radius: 16px; font-family: 'Inter', sans-serif; font-size: 1rem; color: #1f2937; font-weight: 600; outline: none; transition: all 0.2s; cursor: pointer; -webkit-appearance: none; appearance: none;"
                                     onfocus="this.style.boxShadow='inset 7px 7px 14px #d1d5db, inset -7px -7px 14px #ffffff';"
@@ -1448,8 +1456,10 @@
                             </div>
 
                             <div class="form-group" style="display: flex; flex-direction: column; gap: 10px;">
-                                <label style="font-weight: 700; font-size: 0.85rem; color: #4b5563; padding-left: 5px; text-shadow: 1px 1px 1px #fff; text-transform: uppercase; letter-spacing: 0.5px;"><i class="fa-solid fa-lock"
-                                        style="color: #881337; margin-right: 6px;"></i> Password</label>
+                                <label
+                                    style="font-weight: 700; font-size: 0.85rem; color: #4b5563; padding-left: 5px; text-shadow: 1px 1px 1px #fff; text-transform: uppercase; letter-spacing: 0.5px;"><i
+                                        class="fa-solid fa-lock" style="color: #881337; margin-right: 6px;"></i>
+                                    Password</label>
                                 <input type="password" id="int-reg-password" required placeholder="Create a password"
                                     style="padding: 16px 20px; background: #f8f9fa; box-shadow: inset 5px 5px 10px #d1d5db, inset -5px -5px 10px #ffffff; border: none; border-radius: 16px; font-family: 'Inter', sans-serif; font-size: 1rem; color: #1f2937; font-weight: 600; outline: none; transition: all 0.2s;"
                                     onfocus="this.style.boxShadow='inset 7px 7px 14px #d1d5db, inset -7px -7px 14px #ffffff';"

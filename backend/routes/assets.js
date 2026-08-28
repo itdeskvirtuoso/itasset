@@ -394,7 +394,7 @@ router.get('/search', async (req, res) => {
       searchQuery.ownership = req.query.ownership;
     }
 
-    const assets = await Asset.find(searchQuery).limit(10).select('assetTagNumber deviceType make model status assignedToName');
+    const assets = await Asset.find(searchQuery).limit(10).select('assetTagNumber deviceType make model status assignedToName').lean();
 
     res.json(assets);
   } catch (err) {
@@ -411,7 +411,7 @@ router.get('/', async (req, res) => {
     if (req.query.department) filters['assignedTo.department'] = req.query.department;
     if (req.query.ownership && req.query.ownership !== 'All') filters.ownership = req.query.ownership;
 
-    const assets = await Asset.find(filters).sort({ createdAt: -1 });
+    const assets = await Asset.find(filters).sort({ createdAt: -1 }).lean();
     res.json(assets);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -426,27 +426,33 @@ router.get('/dashboard-stats', async (req, res) => {
 
     if (req.query.ownership && req.query.ownership !== 'All') {
       baseFilter.ownership = req.query.ownership;
-      const assetsForOwnership = await Asset.find({ ownership: req.query.ownership }).select('assetTagNumber');
+      const assetsForOwnership = await Asset.find({ ownership: req.query.ownership }).select('assetTagNumber').lean();
       validAssetTags = assetsForOwnership.map(a => a.assetTagNumber);
     }
 
-    const totalAssets = await Asset.countDocuments(baseFilter);
-    const inUse = await Asset.countDocuments({ ...baseFilter, status: 'In Use' });
-    const inStock = await Asset.countDocuments({ ...baseFilter, status: 'In Stock' });
-    const underRepair = await Asset.countDocuments({ ...baseFilter, status: 'Under Repair' });
+    const [totalAssets, inUse, inStock, underRepair] = await Promise.all([
+      Asset.countDocuments(baseFilter),
+      Asset.countDocuments({ ...baseFilter, status: 'In Use' }),
+      Asset.countDocuments({ ...baseFilter, status: 'In Stock' }),
+      Asset.countDocuments({ ...baseFilter, status: 'Under Repair' })
+    ]);
 
     let returnedAssets, activeAllocations;
     let recentAllocationsQuery = {};
     let recentReturnsQuery = {};
 
     if (validAssetTags) {
-      returnedAssets = await Return.countDocuments({ assetTagNumber: { $in: validAssetTags } });
-      activeAllocations = await Allocation.countDocuments({ assetTagNumber: { $in: validAssetTags } });
       recentAllocationsQuery.assetTagNumber = { $in: validAssetTags };
       recentReturnsQuery.assetTagNumber = { $in: validAssetTags };
+      [returnedAssets, activeAllocations] = await Promise.all([
+        Return.countDocuments({ assetTagNumber: { $in: validAssetTags } }),
+        Allocation.countDocuments({ assetTagNumber: { $in: validAssetTags } })
+      ]);
     } else {
-      returnedAssets = await Return.countDocuments();
-      activeAllocations = await Allocation.countDocuments();
+      [returnedAssets, activeAllocations] = await Promise.all([
+        Return.countDocuments(),
+        Allocation.countDocuments()
+      ]);
     }
 
     // Aggregations for charts
@@ -460,9 +466,11 @@ router.get('/dashboard-stats', async (req, res) => {
       { $group: { _id: '$status', count: { $sum: 1 } } }
     ]);
 
-    const recentActivities = await Asset.find(baseFilter).sort({ updatedAt: -1 }).limit(5).select('assetTagNumber deviceType status updatedAt');
-    const recentAllocations = await Allocation.find(recentAllocationsQuery).sort({ assignDate: -1 }).limit(5).select('employeeName assetTagNumber assignDate expectedReturnDate issueNotes');
-    const recentReturns = await Return.find(recentReturnsQuery).sort({ returnDate: -1 }).limit(5).select('assetTagNumber employeeName deviceCondition returnDate penaltyAmount notes');
+    const [recentActivities, recentAllocations, recentReturns] = await Promise.all([
+      Asset.find(baseFilter).sort({ updatedAt: -1 }).limit(5).select('assetTagNumber deviceType status updatedAt').lean(),
+      Allocation.find(recentAllocationsQuery).sort({ assignDate: -1 }).limit(5).select('employeeName assetTagNumber assignDate expectedReturnDate issueNotes').lean(),
+      Return.find(recentReturnsQuery).sort({ returnDate: -1 }).limit(5).select('assetTagNumber employeeName deviceCondition returnDate penaltyAmount notes').lean()
+    ]);
 
     // Live 6-month trend data for advanced graphical representation
     const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -484,9 +492,11 @@ router.get('/dashboard-stats', async (req, res) => {
     sixMonthsAgo.setHours(0, 0, 0, 0);
 
     // Fetch live raw data for the last 6 months
-    const liveAddedAssets = await Asset.find({ ...baseFilter, createdAt: { $gte: sixMonthsAgo } }).select('createdAt');
-    const liveAllocations = await Allocation.find({ ...recentAllocationsQuery, assignDate: { $gte: sixMonthsAgo } }).select('assignDate');
-    const liveReturns = await Return.find({ ...recentReturnsQuery, returnDate: { $gte: sixMonthsAgo } }).select('returnDate');
+    const [liveAddedAssets, liveAllocations, liveReturns] = await Promise.all([
+      Asset.find({ ...baseFilter, createdAt: { $gte: sixMonthsAgo } }).select('createdAt').lean(),
+      Allocation.find({ ...recentAllocationsQuery, assignDate: { $gte: sixMonthsAgo } }).select('assignDate').lean(),
+      Return.find({ ...recentReturnsQuery, returnDate: { $gte: sixMonthsAgo } }).select('returnDate').lean()
+    ]);
 
     // Initialize counts arrays with 0s
     const addedCounts = [0, 0, 0, 0, 0, 0];
@@ -544,7 +554,7 @@ router.get('/dashboard-stats', async (req, res) => {
 // GET single asset
 router.get('/:id', async (req, res) => {
   try {
-    const asset = await Asset.findById(req.params.id);
+    const asset = await Asset.findById(req.params.id).lean();
     if (!asset) return res.status(404).json({ message: 'Asset not found' });
     res.json(asset);
   } catch (err) {

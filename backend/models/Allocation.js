@@ -10,4 +10,9 @@ const AllocationSchema = new mongoose.Schema({
     status: { type: String, enum: ['Active', 'Returned'], default: 'Active' }
 }, { timestamps: true });
 
+// Add performance indexes
+AllocationSchema.index({ assetTagNumber: 1 });
+AllocationSchema.index({ employeeName: 1 });
+AllocationSchema.index({ status: 1 });
+
 module.exports = mongoose.model('Allocation', AllocationSchema);
