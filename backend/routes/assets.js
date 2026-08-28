@@ -33,10 +33,25 @@ const SKIP_SHEETS = ['summary', 'o365 user list', 'o365', 'user list'];
 
 // Flexible column name mapper — maps various Excel header names to schema fields
 function findColumnValue(row, possibleNames) {
-  for (const key of Object.keys(row)) {
-    const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '');
-    for (const name of possibleNames) {
-      if (normalized === name || normalized.includes(name)) {
+  for (const name of possibleNames) {
+    for (const key of Object.keys(row)) {
+      const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (normalized === name) {
+        let val = row[key];
+        if (typeof val === 'string') {
+          const upperVal = val.trim().toUpperCase();
+          if (upperVal === 'NA' || upperVal === 'N/A' || upperVal === '-') {
+            return '';
+          }
+        }
+        return val;
+      }
+    }
+  }
+  for (const name of possibleNames) {
+    for (const key of Object.keys(row)) {
+      const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (normalized.includes(name)) {
         let val = row[key];
         if (typeof val === 'string') {
           const upperVal = val.trim().toUpperCase();
