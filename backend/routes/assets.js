@@ -162,6 +162,12 @@ function mapRowToAsset(row, sheetDeviceType) {
 
   // Determine device type from sheet name or column
   let deviceType = findColumnValue(row, ['devicetype', 'device', 'type', 'assettype']) || sheetDeviceType || '';
+  
+  // Smart fallback: If deviceType is generic ('Sheet1') or missing, check if it's Software
+  const hasSoftwareCol = Object.keys(row).some(k => k.toLowerCase().replace(/[^a-z0-9]/g, '').includes('software'));
+  if ((!deviceType || deviceType.toLowerCase().startsWith('sheet')) && hasSoftwareCol) {
+      deviceType = 'Software';
+  }
 
   // Map status
   let rawStatus = findColumnValue(row, ['status', 'state', 'condition']);
