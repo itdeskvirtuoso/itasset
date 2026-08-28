@@ -36,7 +36,16 @@ function findColumnValue(row, possibleNames) {
   for (const key of Object.keys(row)) {
     const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '');
     for (const name of possibleNames) {
-      if (normalized === name || normalized.includes(name)) return row[key];
+      if (normalized === name || normalized.includes(name)) {
+        let val = row[key];
+        if (typeof val === 'string') {
+          const upperVal = val.trim().toUpperCase();
+          if (upperVal === 'NA' || upperVal === 'N/A' || upperVal === '-') {
+            return '';
+          }
+        }
+        return val;
+      }
     }
   }
   return undefined;
