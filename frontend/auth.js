@@ -1,136 +1,89 @@
-// --- AUTH.JS MERGED CONTENT ---
+// ==========================================
+// LOGIN FLOW
+// 1. Welcome  — swipe the slider (or focus it and press Enter)
+// 2. Sign in  — username + password, checked by the server against MongoDB
+// 3. Success  — greet the user, then open the dashboard
+// A saved token is re-checked with /api/auth/me before the login is skipped.
+// ==========================================
 var API_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:5000/api' : '/api';
 
-document.addEventListener('DOMContentLoaded', () => {
-    if (window.location.pathname.includes('auth.html') || window.location.pathname.endsWith('/frontend/') || window.location.pathname.endsWith('/frontend')) {
-        const token = localStorage.getItem('token');
-        if (token) {
-            window.location.href = 'index.html';
-        }
+(function () {
+    const STEPS = ['welcome', 'login', 'enter'];
+    const $ = (id) => document.getElementById(id);
+    let step = 'welcome';
+
+    // --- Step state: drives the guide badge (CSS) and the progress list ---
+    function setStep(next) {
+        step = next;
+        document.body.dataset.step = next;
+        const current = STEPS.indexOf(next === 'success' ? 'enter' : next);
+        document.querySelectorAll('.auth-steps li').forEach((li) => {
+            const i = STEPS.indexOf(li.dataset.step);
+            li.classList.toggle('is-done', i < current || next === 'success');
+            li.classList.toggle('is-current', i === current && next !== 'success');
+            if (i === current) li.setAttribute('aria-current', 'step');
+            else li.removeAttribute('aria-current');
+        });
     }
 
-    // Slide to Unlock Logic
-    initSlider();
-    
-    // Typewriter Label Animation
-    setTimeout(() => {
-        typeWriterEffect('system-welcome-label', 'Welcome to the IT Asset Management');
-    }, 500); // Slight delay for dramatic effect
-});
-
-function typeWriterEffect(elementId, text) {
-    const el = document.getElementById(elementId);
-    if (!el) return;
-    el.textContent = '';
-    let i = 0;
-    
-    function type() {
-        if (i < text.length) {
-            el.textContent += text.charAt(i);
-            i++;
-            // Randomize typing speed slightly for organic feel
-            let speed = Math.random() * 50 + 30; 
-            setTimeout(type, speed);
-        } else {
-            // Typing finished, let cursor blink
-        }
+    function swapPanel(from, to) {
+        from.classList.add('is-leaving');
+        setTimeout(() => {
+            from.hidden = true;
+            from.classList.remove('is-leaving');
+            to.hidden = false;
+            to.classList.remove('is-entering');
+            void to.offsetWidth; // restart the entrance animation
+            to.classList.add('is-entering');
+        }, 250);
     }
-    type();
-}
 
-window.switchTab = function (tab) {
-    // Left empty or removed, tabs no longer exist
-}
+    function setSubtitle(text) {
+        const el = $('auth-subtitle');
+        el.classList.add('is-fading');
+        setTimeout(() => {
+            el.textContent = text;
+            el.classList.remove('is-fading');
+        }, 200);
+    }
 
-function initSlider() {
-    const container = document.getElementById('slide-container');
-    const thumb = document.getElementById('slide-thumb');
-    const fill = document.getElementById('slide-fill');
-
-    if (!container || !thumb || !fill) return;
-
-    let isDragging = false;
-    let startX = 0;
-    let currentX = 5; // Initial left position
-    const maxDrag = container.offsetWidth - thumb.offsetWidth - 5;
-
-    const startDrag = (e) => {
-        isDragging = true;
-        startX = e.type.includes('mouse') ? e.pageX : e.touches[0].pageX;
-        thumb.style.transition = 'none';
-        fill.style.transition = 'none';
-    };
-
-    const onDrag = (e) => {
-        if (!isDragging) return;
-        const pageX = e.type.includes('mouse') ? e.pageX : e.touches[0].pageX;
-        let walk = pageX - startX;
-        let newLeft = Math.max(5, Math.min(maxDrag, currentX + walk));
-
-        thumb.style.left = newLeft + 'px';
-        fill.style.width = (newLeft + (thumb.offsetWidth / 2)) + 'px';
-
-        // Unlock threshold
-        if (newLeft >= maxDrag - 5) {
-            isDragging = false;
-            thumb.style.left = maxDrag + 'px';
-            fill.style.width = '100%';
-            setTimeout(() => {
-                window.showLoginForm();
-                // Reset after showing form so it's ready if they go back
-                setTimeout(() => {
-                    thumb.style.transition = 'left 0.3s ease';
-                    fill.style.transition = 'width 0.3s ease';
-                    thumb.style.left = '5px';
-                    fill.style.width = '0';
-                    currentX = 5;
-                }, 1000);
-            }, 100);
+    function showAlert(message, type = 'error') {
+        if (type === 'error') {
+            new Audio('freesound_community-beep-warning-6387.mp3').play().catch(() => { });
         }
-    };
+        const box = $('alert-message');
+        box.textContent = message;
+        box.className = 'alert-message ' + type;
+        box.hidden = false;
+    }
 
-    const stopDrag = () => {
-        if (!isDragging) return;
-        isDragging = false;
-        const currentLeft = parseInt(thumb.style.left || 5);
-        if (currentLeft < maxDrag - 5) {
-            // Snap back
-            thumb.style.transition = 'left 0.3s ease';
-            fill.style.transition = 'width 0.3s ease';
-            thumb.style.left = '5px';
-            fill.style.width = '0';
-            currentX = 5;
-        }
-    };
+    function clearAlert() {
+        $('alert-message').hidden = true;
+    }
 
-    thumb.addEventListener('mousedown', startDrag);
-    thumb.addEventListener('touchstart', startDrag, { passive: true });
+    function shakeCard() {
+        const card = $('auth-card');
+        card.classList.remove('is-shaking');
+        void card.offsetWidth;
+        card.classList.add('is-shaking');
+    }
 
-    document.addEventListener('mousemove', onDrag);
-    document.addEventListener('touchmove', onDrag, { passive: true });
+    function typeWriterEffect(el, text) {
+        el.textContent = '';
+        let i = 0;
+        (function type() {
+            if (i >= text.length) return;
+            el.textContent += text.charAt(i++);
+            setTimeout(type, Math.random() * 50 + 30); // uneven speed feels typed
+        })();
+    }
 
-    document.addEventListener('mouseup', stopDrag);
-    document.addEventListener('touchend', stopDrag);
-}
-
-window.showLoginForm = function () {
-    const welcomeStep = document.getElementById('step-welcome');
-    const loginForm = document.getElementById('login-form');
-    const authSubtitle = document.getElementById('auth-subtitle');
-
-    // Surprise Blast Animation!
-    if (typeof confetti !== 'undefined') {
+    function celebrate() {
+        if (typeof confetti === 'undefined') return;
         const count = 200;
-        const defaults = {
-            origin: { y: 0.7 }
-        };
-
-        function fire(particleRatio, opts) {
-            confetti(Object.assign({}, defaults, opts, {
-                particleCount: Math.floor(count * particleRatio)
-            }));
-        }
-
+        const fire = (ratio, opts) => confetti(Object.assign({ origin: { y: 0.7 } }, opts, {
+            particleCount: Math.floor(count * ratio)
+        }));
         fire(0.25, { spread: 26, startVelocity: 55 });
         fire(0.2, { spread: 60 });
         fire(0.35, { spread: 100, decay: 0.91, scalar: 0.8 });
@@ -138,144 +91,207 @@ window.showLoginForm = function () {
         fire(0.1, { spread: 120, startVelocity: 45 });
     }
 
-    if (welcomeStep && loginForm) {
-        welcomeStep.style.opacity = '0';
-        welcomeStep.style.transform = 'scale(0.8)';
-        if (authSubtitle) {
-            authSubtitle.style.opacity = '0';
-            setTimeout(() => { authSubtitle.textContent = 'Enter your credentials'; authSubtitle.style.opacity = '1'; }, 300);
-        }
+    // --- Step 1: swipe slider (pointer = mouse, touch and pen) ---
+    function initSlider() {
+        const track = $('slide-container');
+        const thumb = $('slide-thumb');
+        const fill = $('slide-fill');
+        const PAD = 5;
+        let dragging = false;
+        let startX = 0;
+        let maxX = 0;
 
-        setTimeout(() => {
-            welcomeStep.style.display = 'none';
-            loginForm.style.display = 'block';
+        // measured at drag time, so resizes and the card's entrance animation can't skew it
+        const measure = () => { maxX = track.clientWidth - thumb.offsetWidth - PAD * 2; };
 
-            // Force reflow for animation
-            void loginForm.offsetWidth;
+        const render = (p) => {
+            thumb.style.transform = `translateX(${p * maxX}px)`;
+            fill.style.width = p >= 1 ? '100%' : p > 0 ? `${PAD + p * maxX + thumb.offsetWidth / 2}px` : '0';
+        };
 
-            loginForm.style.opacity = '1';
-            loginForm.style.transform = 'translateY(0) scale(1)';
-            document.getElementById('login-username').focus();
-        }, 300);
-    }
-}
+        const unlock = () => {
+            dragging = false;
+            track.classList.remove('is-dragging');
+            track.classList.add('is-unlocked');
+            render(1);
+            setTimeout(showLoginForm, 300);
+        };
 
-window.hideLoginForm = function () {
-    const welcomeStep = document.getElementById('step-welcome');
-    const loginForm = document.getElementById('login-form');
-    const authSubtitle = document.getElementById('auth-subtitle');
+        thumb.addEventListener('pointerdown', (e) => {
+            if (step !== 'welcome') return;
+            measure();
+            dragging = true;
+            startX = e.clientX;
+            track.classList.add('is-dragging');
+            thumb.setPointerCapture(e.pointerId);
+        });
 
-    if (welcomeStep && loginForm) {
-        loginForm.style.opacity = '0';
-        loginForm.style.transform = 'translateY(30px)';
-        if (authSubtitle) {
-            authSubtitle.style.opacity = '0';
-            setTimeout(() => { authSubtitle.textContent = 'Sign in to continue'; authSubtitle.style.opacity = '1'; }, 300);
-        }
+        thumb.addEventListener('pointermove', (e) => {
+            if (!dragging) return;
+            const p = Math.max(0, Math.min(1, (e.clientX - startX) / maxX));
+            if (p >= 0.95) unlock();
+            else render(p);
+        });
 
-        setTimeout(() => {
-            loginForm.style.display = 'none';
-            welcomeStep.style.display = 'flex';
+        const release = () => {
+            if (!dragging) return;
+            dragging = false;
+            track.classList.remove('is-dragging');
+            render(0); // CSS transition snaps it back
+        };
+        thumb.addEventListener('pointerup', release);
+        thumb.addEventListener('pointercancel', release);
 
-            // Force reflow
-            void welcomeStep.offsetWidth;
-
-            welcomeStep.style.opacity = '1';
-            welcomeStep.style.transform = 'scale(1)';
-        }, 400);
-    }
-}
-
-window.togglePasswordVisibility = function (inputId, iconElement) {
-    const input = document.getElementById(inputId);
-    if (!input) return;
-    if (input.type === 'password') {
-        input.type = 'text';
-        iconElement.classList.remove('fa-eye-slash');
-        iconElement.classList.add('fa-eye');
-    } else {
-        input.type = 'password';
-        iconElement.classList.remove('fa-eye');
-        iconElement.classList.add('fa-eye-slash');
-    }
-}
-
-window.showAlert = function (message, type = 'error') {
-    if (type === 'error' || type === 'warning') {
-        const audio = new Audio('freesound_community-beep-warning-6387.mp3');
-        audio.play().catch(e => console.log('Audio play failed:', e));
-    }
-    const alertBox = document.getElementById('alert-message');
-    if (alertBox) {
-        alertBox.textContent = message;
-        alertBox.className = "alert-message " + type;
-        alertBox.style.display = 'block';
-    }
-}
-
-window.validateEmailRealtime = function (email) {
-    const icon = document.getElementById('email-valid-icon');
-    if (!icon) return;
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (emailRegex.test(email)) {
-        icon.style.display = 'block';
-    } else {
-        icon.style.display = 'none';
-    }
-}
-
-window.validatePasswordRealtime = function (password) {
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-    const loginForm = document.getElementById('login-form');
-    if (loginForm) {
-        loginForm.addEventListener('submit', async (e) => {
+        thumb.addEventListener('keydown', (e) => {
+            if (step !== 'welcome' || !['Enter', ' ', 'ArrowRight'].includes(e.key)) return;
             e.preventDefault();
-            const username = document.getElementById('login-username').value;
-            const password = document.getElementById('login-password').value;
-            const btn = document.getElementById('login-submit');
+            measure();
+            unlock();
+        });
 
-            btn.disabled = true;
-            btn.innerHTML = '<span>Logging in...</span> <i class="fa-solid fa-spinner fa-spin"></i>';
+        return function resetSlider() {
+            track.classList.remove('is-unlocked');
+            render(0);
+        };
+    }
 
-            try {
-                const response = await fetch(API_URL + '/auth/login', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username, password })
-                });
+    let resetSlider = () => { };
 
-                const data = await response.json();
+    function showLoginForm() {
+        if (step !== 'welcome') return;
+        setStep('login');
+        clearAlert();
+        celebrate();
+        setSubtitle('Enter your credentials');
+        swapPanel($('step-welcome'), $('login-form'));
+        setTimeout(() => $('login-username').focus(), 320);
+    }
 
-                if (response.ok) {
-                    localStorage.setItem('token', data.token);
-                    localStorage.setItem('user', JSON.stringify(data.user));
-                    window.location.href = 'index.html';
-                } else {
-                    window.showAlert(data.message || 'Login failed');
-                }
-            } catch (err) {
-                window.showAlert('Cannot connect to server.');
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = '<span>Login</span> <i class="fa-solid fa-arrow-right"></i>';
+    function hideLoginForm() {
+        if (step !== 'login' || $('login-submit').disabled) return;
+        setStep('welcome');
+        clearAlert();
+        setSubtitle('Sign in to continue');
+        swapPanel($('login-form'), $('step-welcome'));
+        resetSlider();
+        setTimeout(() => $('slide-thumb').focus(), 320);
+    }
+
+    // --- Step 2: credentials ---
+    function setBusy(busy) {
+        const btn = $('login-submit');
+        btn.disabled = busy;
+        $('login-back').disabled = busy;
+        $('login-username').readOnly = busy;
+        $('login-password').readOnly = busy;
+        btn.innerHTML = busy
+            ? '<span>Verifying…</span> <i class="fa-solid fa-spinner fa-spin"></i>'
+            : '<span>Sign In</span> <i class="fa-solid fa-arrow-right"></i>';
+    }
+
+    async function submitLogin(e) {
+        e.preventDefault();
+        if (step !== 'login' || $('login-submit').disabled) return;
+
+        const userInput = $('login-username');
+        const passInput = $('login-password');
+        const username = userInput.value.trim();
+        const password = passInput.value;
+
+        clearAlert();
+        if (!username || !password) {
+            showAlert(!username ? 'Please enter your username.' : 'Please enter your password.');
+            (username ? passInput : userInput).focus();
+            shakeCard();
+            return;
+        }
+
+        setBusy(true);
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 15000);
+        try {
+            const res = await fetch(API_URL + '/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password }),
+                signal: controller.signal
+            });
+            const data = await res.json().catch(() => ({}));
+
+            if (res.ok && data.token && data.user) {
+                localStorage.setItem('token', data.token);
+                localStorage.setItem('user', JSON.stringify(data.user));
+                enterDashboard(data.user);
+                return;
             }
-        });
+
+            showAlert(data.message || 'Login failed. Please try again.');
+            passInput.value = '';
+            passInput.focus();
+            shakeCard();
+        } catch (err) {
+            showAlert(err.name === 'AbortError'
+                ? 'The server is taking too long to respond. Please try again.'
+                : 'Cannot connect to the server. Please check your connection.');
+        } finally {
+            clearTimeout(timer);
+        }
+        setBusy(false);
     }
 
-    // Registration logic moved to authenticated settings panel
-});
-
-// --- Interactive Ambient Background Logic ---
-document.addEventListener("DOMContentLoaded", () => {
-    const ambientBg = document.getElementById("ambient-bg");
-    if (ambientBg) {
-        document.addEventListener("mousemove", (e) => {
-            const x = (e.clientX / window.innerWidth) * 100;
-            const y = (e.clientY / window.innerHeight) * 100;
-            ambientBg.style.backgroundImage = `radial-gradient(circle at ${x}% ${y}%, rgba(225, 29, 72, 0.20) 0%, rgba(255, 255, 255, 0) 60%)`;
-        });
+    // --- Step 3: success, then the dashboard ---
+    function enterDashboard(user) {
+        setStep('success');
+        $('success-name').textContent = user.username;
+        setSubtitle('Signed in successfully');
+        swapPanel($('login-form'), $('step-success'));
+        setTimeout(() => window.location.replace('index.html'), 1600);
     }
-});
 
+    // A saved token only skips the login if the server still accepts it
+    async function resumeSession() {
+        const token = localStorage.getItem('token');
+        if (!token) return;
+        try {
+            const res = await fetch(API_URL + '/auth/me', { headers: { Authorization: 'Bearer ' + token } });
+            if (res.ok) {
+                const data = await res.json();
+                localStorage.setItem('user', JSON.stringify(data.user));
+                window.location.replace('index.html');
+            } else if (res.status === 401 || res.status === 403) {
+                localStorage.removeItem('token');
+                localStorage.removeItem('user');
+            }
+        } catch (err) {
+            // server unreachable: stay on the login screen so the user can retry
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        setStep('welcome');
+        resumeSession();
+        resetSlider = initSlider();
+
+        $('login-form').addEventListener('submit', submitLogin);
+        $('login-back').addEventListener('click', hideLoginForm);
+        $('auth-card').addEventListener('animationend', (e) => {
+            if (e.animationName === 'cardShake') e.currentTarget.classList.remove('is-shaking');
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && step === 'login') hideLoginForm();
+        });
+
+        const toggle = $('toggle-password');
+        const password = $('login-password');
+        toggle.addEventListener('click', () => {
+            const show = password.type === 'password';
+            password.type = show ? 'text' : 'password';
+            toggle.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+            toggle.firstElementChild.className = show ? 'fa-regular fa-eye' : 'fa-regular fa-eye-slash';
+            password.focus();
+        });
+
+        setTimeout(() => typeWriterEffect($('system-welcome-label'), 'Welcome to the IT Asset Management'), 500);
+    });
+})();

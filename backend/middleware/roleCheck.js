@@ -1,30 +1,29 @@
 const Role = require('../models/Role');
+const { sendError } = require('../utils/security');
 
-const checkPermission = (requiredPermission) => {
-  return async (req, res, next) => {
-    try {
-      if (!req.user || !req.user.role) {
-        return res.status(401).json({ message: 'Not authorized, no user role found' });
-      }
+// Server-side twin of the permissions edited in Settings → Roles. Passes when the user's role
+// holds '*' or any one of the listed permissions. Super Admin always passes, so a mis-edited
+// role can never lock the administrators out. Use after the auth middleware.
+const checkPermission = (...required) => async (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ code: 'AUTH_REQUIRED', message: 'Please sign in to continue.' });
+  }
+  if (req.user.role === 'Super Admin') return next();
 
-      const role = await Role.findOne({ name: req.user.role });
-      if (!role) {
-        return res.status(403).json({ message: 'Role not found' });
-      }
+  try {
+    const role = await Role.findOne({ name: req.user.role }).select('permissions').lean();
+    const permissions = role ? role.permissions : [];
+    if (permissions.includes('*') || required.some((p) => permissions.includes(p))) return next();
+    res.status(403).json({ code: 'FORBIDDEN', message: "You don't have permission to do this. Ask a Super Admin for access." });
+  } catch (err) {
+    sendError(res, err, 'roleCheck');
+  }
+};
 
-      if (!role.permissions.includes(requiredPermission) && !role.permissions.includes('Full Control')) {
-        // Also allow if it's the dashboard (index.html) as everyone should have access to it
-        if (requiredPermission !== 'index.html') {
-          return res.status(403).json({ message: 'Access denied: Insufficient permissions for this action' });
-        }
-      }
-
-      next();
-    } catch (err) {
-      console.error('Role check error:', err);
-      res.status(500).json({ message: 'Server error during authorization' });
-    }
-  };
+const requireSuperAdmin = (req, res, next) => {
+  if (req.user && req.user.role === 'Super Admin') return next();
+  res.status(403).json({ code: 'FORBIDDEN', message: 'Only a Super Admin can do this.' });
 };
 
 module.exports = checkPermission;
+module.exports.requireSuperAdmin = requireSuperAdmin;

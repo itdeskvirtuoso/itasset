@@ -1,26 +1,33 @@
 const express = require('express');
 const router = express.Router();
+const mongoose = require('mongoose');
 const Asset = require('../models/Asset');
 const Return = require('../models/Return');
 const Allocation = require('../models/Allocation');
 const multer = require('multer');
 const XLSX = require('xlsx');
+const auth = require('../middleware/auth');
+const checkPermission = require('../middleware/roleCheck');
+const { toStr, pick, sendError } = require('../utils/security');
 
-const fs = require('fs');
-const os = require('os');
+router.use(auth);
+
+// Fields a client may set on an asset; everything else (_id, timestamps, ...) is ignored
+const ASSET_FIELDS = [
+  'srNo', 'assetTagNumber', 'serialNumber', 'deviceType', 'make', 'softwareCategory', 'model',
+  'processor', 'generation', 'ram', 'storage', 'os', 'macAddress', 'ownership', 'vendorName',
+  'purchaseDate', 'warrantyEndDate', 'status', 'assignedToName', 'employeeId', 'assignedBy', 'remark'
+];
+
+// Kept in memory and parsed straight from the buffer: no temp files to clean up,
+// and the uploaded file name never touches a disk path
+const IMPORT_MAX_BYTES = 20 * 1024 * 1024;
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: function (req, file, cb) {
-      cb(null, os.tmpdir())
-    },
-    filename: function (req, file, cb) {
-      cb(null, 'asset-import-' + Date.now() + '-' + file.originalname)
-    }
-  }),
-  limits: { fileSize: 50 * 1024 * 1024 },
+  storage: multer.memoryStorage(),
+  limits: { fileSize: IMPORT_MAX_BYTES, files: 1 },
   fileFilter: (req, file, cb) => {
-    const ext = file.originalname.toLowerCase();
-    if (ext.endsWith('.xlsx') || ext.endsWith('.xls') || ext.endsWith('.csv')) {
+    const name = String(file.originalname || '').toLowerCase();
+    if (name.endsWith('.xlsx') || name.endsWith('.xls') || name.endsWith('.csv')) {
       cb(null, true);
     } else {
       cb(new Error('Only .xlsx, .xls, and .csv files are allowed'));
@@ -28,42 +35,95 @@ const upload = multer({
   }
 });
 
+function receiveImportFile(req, res, next) {
+  upload.single('file')(req, res, (err) => {
+    if (!err) return next();
+    const message = err.code === 'LIMIT_FILE_SIZE' ? 'File is too large (max 20 MB).' : err.message;
+    res.status(400).json({ message });
+  });
+}
+
 // Sheets to skip during import
 const SKIP_SHEETS = ['summary', 'o365 user list', 'o365', 'user list'];
 
-// Flexible column name mapper — maps various Excel header names to schema fields
-function findColumnValue(row, possibleNames) {
-  for (const name of possibleNames) {
-    for (const key of Object.keys(row)) {
-      const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '');
-      if (normalized === name) {
-        let val = row[key];
-        if (typeof val === 'string') {
-          const upperVal = val.trim().toUpperCase();
-          if (upperVal === 'NA' || upperVal === 'N/A' || upperVal === '-') {
-            return '';
-          }
-        }
-        return val;
-      }
-    }
+// Header cell -> lowercase letters/digits only ("Serial No." -> "serialno")
+const normalizeHeader = (key) => String(key).toLowerCase().replace(/[^a-z0-9]/g, '');
+const BLANK_CELLS = new Set(['NA', 'N/A', '-']);
+const cleanCell = (val) => (typeof val === 'string' && BLANK_CELLS.has(val.trim().toUpperCase()) ? '' : val);
+
+// Exact header names win. A partial match ("warrantyvalidupto" contains "warranty") is only tried
+// for names of 5+ letters, so short names like "id", "os", "ram" or "end" can't grab unrelated
+// columns such as "Valid Date", "Cost", "Program" or "Vendor Name". Pass fuzzyNames to narrow it further.
+const FUZZY_MIN_LENGTH = 5;
+function findColumnValue(row, exactNames, fuzzyNames = exactNames.filter((n) => n.length >= FUZZY_MIN_LENGTH)) {
+  const headers = Object.keys(row).map((key) => ({ key, norm: normalizeHeader(key) }));
+  for (const name of exactNames) {
+    const hit = headers.find((h) => h.norm === name);
+    if (hit) return cleanCell(row[hit.key]);
   }
-  for (const name of possibleNames) {
-    for (const key of Object.keys(row)) {
-      const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '');
-      if (normalized.includes(name)) {
-        let val = row[key];
-        if (typeof val === 'string') {
-          const upperVal = val.trim().toUpperCase();
-          if (upperVal === 'NA' || upperVal === 'N/A' || upperVal === '-') {
-            return '';
-          }
-        }
-        return val;
-      }
-    }
+  for (const name of fuzzyNames) {
+    const hit = headers.find((h) => h.norm.includes(name));
+    if (hit) return cleanCell(row[hit.key]);
   }
   return undefined;
+}
+
+// Excel serial number, Date cell, or text such as "15.04.2026 to 14/04/2027"
+function parseExcelDate(val, preferLast = false) {
+  if (val === undefined || val === null || val === '') return undefined;
+  if (val instanceof Date) return isNaN(val.getTime()) ? undefined : val;
+  if (typeof val === 'number') {
+    const d = XLSX.SSF.parse_date_code(val);
+    return d ? new Date(d.y, d.m - 1, d.d) : undefined;
+  }
+
+  let text = String(val).trim();
+
+  // Fix common typos in Indian/English spelling of months
+  text = text.replace(/saptember/gi, 'september')
+    .replace(/augest/gi, 'august')
+    .replace(/febuary/gi, 'february');
+
+  // Extract dates using regex DD.MM.YYYY or DD/MM/YYYY
+  const matches = [...text.matchAll(/(\d{1,2})[./-](\d{1,2})[./-](\d{4})/g)];
+  if (matches.length > 0) {
+    const match = preferLast ? matches[matches.length - 1] : matches[0];
+    return new Date(parseInt(match[3], 10), parseInt(match[2], 10) - 1, parseInt(match[1], 10));
+  }
+
+  // Try splitting by 'to' (e.g., '15 April 2026 to 14 April 2027')
+  if (text.toLowerCase().includes(' to ')) {
+    const parts = text.toLowerCase().split(' to ');
+    text = preferLast ? parts[parts.length - 1].trim() : parts[0].trim();
+  }
+
+  // Clean up random text
+  text = text.replace(/next renew in /gi, '').trim();
+
+  const parsed = new Date(text);
+  return isNaN(parsed.getTime()) ? undefined : parsed;
+}
+
+// Sheet status text -> schema status. Negative phrases are checked first:
+// "Not Working" is a repair, "Inactive" is stock.
+function mapStatus(raw) {
+  if (typeof raw !== 'string' || !raw.trim()) return null;
+  const s = raw.toLowerCase();
+  if (/not\s*working|repair|faulty|defective/.test(s)) return 'Under Repair';
+  if (/scrap/.test(s)) return 'Scrapped';
+  if (/damage/.test(s)) return 'Damaged';
+  if (/lost|missing|stolen/.test(s)) return 'Lost';
+  if (/return/.test(s)) return 'Returned';
+  if (/inactive|in\s*stock|stock|spare|available|unused/.test(s)) return 'In Stock';
+  if (/active|in\s*use|working|assigned|allocated/.test(s)) return 'In Use';
+  return null;
+}
+
+function mapOwnership(raw) {
+  const value = String(raw || '').trim().toLowerCase();
+  if (value.includes('rent')) return 'Rental';
+  if (value.includes('vpel') || value.includes('virtuoso')) return 'VIRTUOSO';
+  return 'Owned';
 }
 
 function mapRowToAsset(row, sheetDeviceType) {
@@ -71,13 +131,13 @@ function mapRowToAsset(row, sheetDeviceType) {
   const assetTagNumber = findColumnValue(row, ['assettag', 'tagno', 'tagnumber', 'assetno']) || '';
   const serialNumber = findColumnValue(row, ['serialnumber', 'serialno', 'assetsrno', 'assetserial', 'key', 'licensekey', 'serialkey']) || '';
   let make = findColumnValue(row, ['make', 'brand', 'manufacturer']) || '';
-  let model = findColumnValue(row, ['model', 'modelno', 'modelnumber', 'softwarename', 'software']) || '';
+  let model = findColumnValue(row, ['model', 'modelno', 'modelnumber', 'softwarename', 'software'], ['modelno', 'modelnumber', 'softwarename', 'software']) || '';
 
   // Handle combined 'Make & Model' column
   if (!make && !model) {
     const combined = findColumnValue(row, ['makemodel', 'makeandmodel']) || '';
     if (combined) {
-      // Try to split on common separators: first word as make, rest as model
+      // First word as make, rest as model
       const parts = String(combined).trim().split(/\s+/);
       if (parts.length >= 2) {
         make = parts[0];
@@ -92,8 +152,8 @@ function mapRowToAsset(row, sheetDeviceType) {
   const ram = findColumnValue(row, ['ram', 'memory']) || '';
   const storage = findColumnValue(row, ['storage', 'hdd', 'ssd', 'harddisk']) || '';
   const os = findColumnValue(row, ['os', 'operatingsystem']) || '';
-  const employeeId = findColumnValue(row, ['employeeid', 'empid', 'id']) || '';
-  let ownership = findColumnValue(row, ['ownership', 'owner', 'rentalagreement', 'company', 'organization', 'vendor', 'vpel/rental']) || '';
+  const employeeId = findColumnValue(row, ['employeeid', 'empid', 'empcode', 'employeecode', 'id']) || '';
+  const ownership = findColumnValue(row, ['ownership', 'owner', 'vpelrental', 'rentalagreement', 'company', 'organization']) || '';
   const vendorName = findColumnValue(row, ['vendorname', 'vendor', 'supplier']) || '';
   const assignedToName = findColumnValue(row, ['username', 'assignedto', 'assignname', 'reportingtomanager', 'employeename', 'empname']) || '';
   const assignedBy = findColumnValue(row, ['assignedby', 'admin', 'givenby']) || '';
@@ -101,117 +161,37 @@ function mapRowToAsset(row, sheetDeviceType) {
   const remark = findColumnValue(row, ['remark', 'remarks', 'notes', 'note']) || '';
 
   // Parse dates
-  let purchaseDateVal = findColumnValue(row, ['purchasedate', 'dateofpurchase', 'purchaseon', 'start', 'assigndate']);
-  let warrantyEndDateVal = findColumnValue(row, ['warrantyenddate', 'warrantyend', 'amcend', 'amcenddate', 'expire', 'expiry', 'renew', 'renewal', 'end', 'validdate', 'amcvalidupto', 'warrantyvalidupto', 'warrantyupto', 'amcupto', 'warranty']);
+  const purchaseDate = parseExcelDate(findColumnValue(row, ['purchasedate', 'dateofpurchase', 'purchaseon', 'start', 'assigndate']), false);
+  let warrantyEndDate = parseExcelDate(findColumnValue(row, ['warrantyenddate', 'warrantyend', 'amcend', 'amcenddate', 'expire', 'expiry', 'renew', 'renewal', 'end', 'validdate', 'amcvalidupto', 'warrantyvalidupto', 'warrantyupto', 'amcupto', 'warranty']), true);
 
-  let purchaseDate = parseExcelDate(purchaseDateVal, false);
-  let warrantyEndDate = parseExcelDate(warrantyEndDateVal, true);
-
-  // Magic fallback for Software sheet where user puts dates in the Remark column
-  if (!warrantyEndDate) {
-    const remarkVal = findColumnValue(row, ['remark', 'remarks']);
-    if (remarkVal) {
-      const fallbackDate = parseExcelDate(remarkVal, true);
-      if (fallbackDate) warrantyEndDate = fallbackDate;
-    }
+  // Fallback for the Software sheet where dates are written in the Remark column
+  if (!warrantyEndDate && remark) {
+    warrantyEndDate = parseExcelDate(remark, true);
   }
 
-  // Excel date serial number conversion + robust string parser
-  function parseExcelDate(val, preferLast = false) {
-    if (!val) return undefined;
-    if (typeof val === 'number') {
-      // Excel serial date
-      const d = XLSX.SSF.parse_date_code(val);
-      if (d) return new Date(d.y, d.m - 1, d.d);
-    }
+  // Device type from a column, else the sheet name. "device" alone must match exactly,
+  // otherwise a "Device Condition" column would become the type.
+  let deviceType = findColumnValue(row, ['devicetype', 'device', 'type', 'assettype'], ['devicetype', 'assettype']) || sheetDeviceType || '';
+  deviceType = String(deviceType).trim();
 
-    val = String(val).trim();
-
-    // Fix common typos in Indian/English spelling of months
-    val = val.replace(/saptember/gi, 'september')
-      .replace(/augest/gi, 'august')
-      .replace(/febuary/gi, 'february');
-
-    // Extract dates using regex DD.MM.YYYY or DD/MM/YYYY
-    const regex = /(\d{1,2})[\.\/\-](\d{1,2})[\.\/\-](\d{4})/g;
-    const matches = [...val.matchAll(regex)];
-
-    if (matches.length > 0) {
-      const match = preferLast ? matches[matches.length - 1] : matches[0];
-      const day = parseInt(match[1]);
-      const month = parseInt(match[2]) - 1;
-      const year = parseInt(match[3]);
-      return new Date(year, month, day);
-    }
-
-    // Try splitting by 'to' (e.g., '15.04.2026 to 14/04/2027')
-    if (val.toLowerCase().includes(' to ')) {
-      const parts = val.toLowerCase().split(' to ');
-      val = preferLast ? parts[parts.length - 1].trim() : parts[0].trim();
-    }
-
-    // Clean up random text
-    val = val.replace(/next renew in /gi, '').trim();
-
-    const parsed = new Date(val);
-    return isNaN(parsed.getTime()) ? undefined : parsed;
-  }
-
-  purchaseDate = parseExcelDate(purchaseDate, false);
-  warrantyEndDate = parseExcelDate(warrantyEndDate, true);
-
-  // Determine device type from sheet name or column
-  let deviceType = findColumnValue(row, ['devicetype', 'device', 'type', 'assettype']) || sheetDeviceType || '';
-  
-  // Smart fallback: If deviceType is generic ('Sheet1') or missing, check if it's Software
-  const hasSoftwareCol = Object.keys(row).some(k => k.toLowerCase().replace(/[^a-z0-9]/g, '').includes('software'));
+  // If deviceType is generic ('Sheet1') or missing, check if it's Software
+  const hasSoftwareCol = Object.keys(row).some((k) => normalizeHeader(k).includes('software'));
   if ((!deviceType || deviceType.toLowerCase().startsWith('sheet')) && hasSoftwareCol) {
-      deviceType = 'Software';
+    deviceType = 'Software';
   }
 
-  // Map status
-  let rawStatus = findColumnValue(row, ['status', 'state', 'condition']);
-  let assetStatus = 'In Stock';
-  if (rawStatus && typeof rawStatus === 'string') {
-    const s = rawStatus.toLowerCase();
-    if (s.includes('active') || s.includes('in use') || s.includes('working')) {
-      assetStatus = 'In Use';
-    } else if (s.includes('repair') || s.includes('not working')) {
-      assetStatus = 'Under Repair';
-    } else if (s.includes('scrap') || s.includes('damage')) {
-      assetStatus = 'Scrapped';
-    } else if (s.includes('stock')) {
-      assetStatus = 'In Stock';
-    }
-  }
-
-  // Map ownership
-  let ownershipVal = String(ownership).trim().toLowerCase();
-  
-  if (ownershipVal.includes('rent')) {
-      ownershipVal = 'Rental';
-  } else if (ownershipVal.includes('vpel') || ownershipVal.includes('virtuoso')) {
-      ownershipVal = 'VIRTUOSO';
-  } else {
-      const ownershipMap = { 'owned': 'Owned', 'rental': 'Rental', 'vpel': 'VIRTUOSO', 'virtuoso': 'VIRTUOSO' };
-      ownershipVal = ownershipMap[ownershipVal] || 'Owned';
-  }
-
-  // Smart status detection: If assigned to someone, it must be 'In Use'
+  // Status from the sheet; without one, an assigned device is in use
   const finalAssignedToName = String(assignedToName).trim();
-  if (assetStatus === 'In Stock') {
-    if (finalAssignedToName && finalAssignedToName !== 'N/A' && finalAssignedToName !== '-') {
-      assetStatus = 'In Use';
-    } else if (!assetStatus) {
-      assetStatus = 'In Stock';
-    }
+  let assetStatus = mapStatus(findColumnValue(row, ['status', 'state', 'condition']));
+  if (!assetStatus) {
+    assetStatus = finalAssignedToName ? 'In Use' : 'In Stock';
   }
 
   return {
     srNo: String(srNo).trim(),
     assetTagNumber: String(assetTagNumber).trim(),
     serialNumber: String(serialNumber).trim() || 'N/A',
-    deviceType: String(deviceType).trim(),
+    deviceType,
     make: String(make).trim(),
     model: String(model).trim(),
     processor: String(processor).trim(),
@@ -219,12 +199,12 @@ function mapRowToAsset(row, sheetDeviceType) {
     ram: String(ram).trim(),
     storage: String(storage).trim(),
     os: String(os).trim(),
-    ownership: ownershipVal,
+    ownership: mapOwnership(ownership),
     vendorName: String(vendorName).trim(),
     purchaseDate,
     warrantyEndDate,
     status: assetStatus,
-    assignedToName: String(finalAssignedToName).trim(),
+    assignedToName: finalAssignedToName,
     employeeId: String(employeeId).trim(),
     assignedBy: String(assignedBy).trim(),
     softwareCategory: String(softwareCategory).trim(),
@@ -233,25 +213,29 @@ function mapRowToAsset(row, sheetDeviceType) {
 }
 
 // POST import Excel
-router.post('/import', upload.single('file'), async (req, res) => {
+router.post('/import', checkPermission('assets.html'), receiveImportFile, async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ message: 'No file uploaded' });
     }
 
-    const workbook = XLSX.readFile(req.file.path, { cellDates: true });
+    let workbook;
+    try {
+      workbook = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
+    } catch (err) {
+      return res.status(400).json({ message: 'The file could not be read. Make sure it is a valid Excel or CSV file.' });
+    }
     const allAssets = [];
     const sheetResults = {};
 
     for (const sheetName of workbook.SheetNames) {
       // Skip summary/user list sheets
-      if (SKIP_SHEETS.some(s => sheetName.toLowerCase().includes(s))) {
+      if (SKIP_SHEETS.some((s) => sheetName.toLowerCase().includes(s))) {
         sheetResults[sheetName] = { status: 'skipped', reason: 'Non-data sheet' };
         continue;
       }
 
       // Determine device type from sheet name
-      let sheetDeviceType = sheetName.trim();
       const typeMap = {
         'laptop': 'Laptop', 'laptops': 'Laptop',
         'desktop': 'Desktop', 'desktops': 'Desktop',
@@ -263,14 +247,12 @@ router.post('/import', upload.single('file'), async (req, res) => {
         'networking': 'Networking Device', 'networking devices': 'Networking Device', 'network': 'Networking Device',
         'software': 'Software', 'softwares': 'Software'
       };
-      sheetDeviceType = typeMap[sheetDeviceType.toLowerCase()] || sheetDeviceType;
+      const sheetDeviceType = typeMap[sheetName.trim().toLowerCase()] || sheetName.trim();
 
       const sheet = workbook.Sheets[sheetName];
 
       // Dynamically find the actual header row (skip decorative title rows)
       const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
-
-
       let headerRowIndex = 0;
       for (let i = 0; i < Math.min(rawRows.length, 20); i++) {
         const rowData = rawRows[i];
@@ -278,11 +260,7 @@ router.post('/import', upload.single('file'), async (req, res) => {
           const rowStr = rowData.join('').toLowerCase().replace(/[^a-z0-9]/g, '');
           // If the row contains multiple common asset headers, it's the header row
           const keywords = ['assettag', 'serial', 'device', 'model', 'make', 'software', 'username', 'department', 'macaddress', 'srno'];
-          let matchCount = 0;
-          keywords.forEach(k => {
-            if (rowStr.includes(k)) matchCount++;
-          });
-
+          const matchCount = keywords.filter((k) => rowStr.includes(k)).length;
           if (matchCount >= 2) {
             headerRowIndex = i;
             break;
@@ -290,12 +268,13 @@ router.post('/import', upload.single('file'), async (req, res) => {
         }
       }
 
-      let rows = XLSX.utils.sheet_to_json(sheet, { range: headerRowIndex, defval: '' });
+      const rows = XLSX.utils.sheet_to_json(sheet, { range: headerRowIndex, defval: '' });
 
       if (rows.length > 0) {
         // Check if the first row is actually a sub-header row (e.g. 'Start', 'End', 'HDD' under merged cells)
-        const firstRowVals = Object.values(rows[0]).map(v => String(v).trim().toLowerCase());
-        const isSubHeader = firstRowVals.includes('start') || firstRowVals.includes('end') || firstRowVals.includes('hdd') || firstRowVals.includes('ram') || firstRowVals.includes('license key') || firstRowVals.includes('assign date') || firstRowVals.includes('valid date') || firstRowVals.includes('key');
+        const firstRowVals = Object.values(rows[0]).map((v) => String(v).trim().toLowerCase());
+        const subHeaderWords = ['start', 'end', 'hdd', 'ram', 'license key', 'assign date', 'valid date', 'key'];
+        const isSubHeader = subHeaderWords.some((w) => firstRowVals.includes(w));
 
         if (isSubHeader) {
           const subHeaderRow = rows.shift(); // Remove it from data rows
@@ -303,10 +282,7 @@ router.post('/import', upload.single('file'), async (req, res) => {
           for (let r = 0; r < rows.length; r++) {
             const newRow = {};
             for (const key of Object.keys(rows[r])) {
-              let newKey = key;
-              if (subHeaderRow[key] && typeof subHeaderRow[key] === 'string') {
-                newKey = subHeaderRow[key];
-              }
+              const newKey = subHeaderRow[key] && typeof subHeaderRow[key] === 'string' ? subHeaderRow[key] : key;
               newRow[newKey] = rows[r][key];
             }
             rows[r] = newRow;
@@ -315,12 +291,13 @@ router.post('/import', upload.single('file'), async (req, res) => {
       }
 
       let sheetCount = 0;
-      let sheetSkippedReasons = [];
+      const sheetSkippedReasons = [];
       for (const row of rows) {
         const asset = mapRowToAsset(row, sheetDeviceType);
 
         // Auto-generate missing asset tags (required by DB schema)
-        if (!asset.assetTagNumber || asset.assetTagNumber === 'undefined' || asset.assetTagNumber === '' || asset.assetTagNumber.toUpperCase() === 'NA' || asset.assetTagNumber === 'N/A' || asset.assetTagNumber === '-') {
+        const tag = asset.assetTagNumber;
+        if (!tag || tag === 'undefined' || tag.toUpperCase() === 'NA' || tag === 'N/A' || tag === '-') {
           if (asset.serialNumber && asset.serialNumber !== 'N/A') {
             asset.assetTagNumber = asset.serialNumber; // Use serial or product key as tag
           } else if (asset.make || asset.model || asset.assignedToName) {
@@ -333,14 +310,14 @@ router.post('/import', upload.single('file'), async (req, res) => {
         }
 
         // Skip rows without device type
-        if (!asset.deviceType || asset.deviceType === 'undefined' || asset.deviceType === '') {
+        if (!asset.deviceType || asset.deviceType === 'undefined') {
           sheetSkippedReasons.push('Missing deviceType');
           continue;
         }
         allAssets.push(asset);
         sheetCount++;
       }
-      sheetResults[sheetName] = { status: 'parsed', rows: sheetCount, skippedReasons: sheetSkippedReasons.slice(0, 3) };
+      sheetResults[sheetName] = { status: 'parsed', rows: sheetCount, skippedReasons: [...new Set(sheetSkippedReasons)].slice(0, 3) };
     }
 
     if (allAssets.length === 0) {
@@ -360,13 +337,14 @@ router.post('/import', upload.single('file'), async (req, res) => {
     } catch (err) {
       if (err.code === 11000 || (err.writeErrors && err.writeErrors.length)) {
         // Some duplicates were found
-        imported = err.insertedDocs ? err.insertedDocs.length : (allAssets.length - (err.writeErrors ? err.writeErrors.length : 0));
-        const dupeErrors = err.writeErrors ? err.writeErrors.filter(e => e.err && e.err.code === 11000) : [];
-        const otherErrors = err.writeErrors ? err.writeErrors.filter(e => !e.err || e.err.code !== 11000) : [];
+        const writeErrors = err.writeErrors || [];
+        imported = err.insertedDocs ? err.insertedDocs.length : (allAssets.length - writeErrors.length);
+        const dupeErrors = writeErrors.filter((e) => e.err && e.err.code === 11000);
+        const otherErrors = writeErrors.filter((e) => !e.err || e.err.code !== 11000);
         skipped = dupeErrors.length;
         failed = otherErrors.length;
         if (otherErrors.length > 0) {
-          errors.push(...otherErrors.slice(0, 5).map(e => e.err ? e.err.errmsg : 'Unknown error'));
+          errors.push(...otherErrors.slice(0, 5).map((e) => (e.err && e.err.errmsg) || 'Unknown error'));
         }
       } else {
         throw err;
@@ -383,29 +361,24 @@ router.post('/import', upload.single('file'), async (req, res) => {
       errors: errors.length > 0 ? errors : undefined
     });
   } catch (err) {
-    console.error('Import error:', err);
-    res.status(500).json({ message: 'Import failed: ' + err.message });
+    sendError(res, err, 'assets/import');
   }
 });
 
 // GET search assets
 router.get('/search', async (req, res) => {
   try {
-    const query = req.query.q;
-    console.log('============= SEARCH TRIGGERED =============');
-    console.log(`Original Query: "${query}"`);
-
+    const query = toStr(req.query.q);
     if (!query) return res.json([]);
 
     // Remove spaces and hyphens from the query to make it ultra-robust for asset tags
     // e.g. "R E 111" or "re-111" becomes "re111"
     const robustQuery = query.replace(/[\s-]/g, '');
-    console.log(`Robust Query for regex: "${robustQuery}"`);
 
-    // Create case-insensitive regex for the search term (using the robust query)
-    // We search the database using BOTH the original query and the robust query for maximum coverage
-    const regexOriginal = new RegExp(query, 'i');
-    const regexRobust = new RegExp(robustQuery, 'i');
+    // Match the typed text literally: "(", "+" or "*" must not break (or bend) the regex
+    const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regexOriginal = new RegExp(escapeRegex(query), 'i');
+    const regexRobust = new RegExp(escapeRegex(robustQuery || query), 'i');
 
     // Search across multiple fields
     const searchQuery = {
@@ -420,15 +393,16 @@ router.get('/search', async (req, res) => {
       ]
     };
 
-    if (req.query.ownership && req.query.ownership !== 'All') {
-      searchQuery.ownership = req.query.ownership;
+    const ownership = toStr(req.query.ownership);
+    if (ownership && ownership !== 'All') {
+      searchQuery.ownership = ownership;
     }
 
-    const assets = await Asset.find(searchQuery).limit(10).select('assetTagNumber deviceType make model status assignedToName').lean();
+    const assets = await Asset.find(searchQuery).limit(10).select('assetTagNumber serialNumber deviceType make model status assignedToName employeeId').lean();
 
     res.json(assets);
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err, 'assets/search');
   }
 });
 
@@ -436,15 +410,17 @@ router.get('/search', async (req, res) => {
 router.get('/', async (req, res) => {
   try {
     const filters = {};
-    if (req.query.status) filters.status = req.query.status;
-    if (req.query.deviceType) filters.deviceType = req.query.deviceType;
-    if (req.query.department) filters['assignedTo.department'] = req.query.department;
-    if (req.query.ownership && req.query.ownership !== 'All') filters.ownership = req.query.ownership;
+    const status = toStr(req.query.status);
+    const deviceType = toStr(req.query.deviceType);
+    const ownership = toStr(req.query.ownership);
+    if (status) filters.status = status;
+    if (deviceType) filters.deviceType = deviceType;
+    if (ownership && ownership !== 'All') filters.ownership = ownership;
 
     const assets = await Asset.find(filters).sort({ createdAt: -1 }).lean();
     res.json(assets);
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err, 'assets/list');
   }
 });
 
@@ -454,10 +430,10 @@ router.get('/dashboard-stats', async (req, res) => {
     const baseFilter = {};
     let validAssetTags = null;
 
-    if (req.query.ownership && req.query.ownership !== 'All') {
-      baseFilter.ownership = req.query.ownership;
-      const assetsForOwnership = await Asset.find({ ownership: req.query.ownership }).select('assetTagNumber').lean();
-      validAssetTags = assetsForOwnership.map(a => a.assetTagNumber);
+    const ownership = toStr(req.query.ownership);
+    if (ownership && ownership !== 'All') {
+      baseFilter.ownership = ownership;
+      validAssetTags = await Asset.distinct('assetTagNumber', { ownership });
     }
 
     const [totalAssets, inUse, inStock, underRepair] = await Promise.all([
@@ -467,34 +443,62 @@ router.get('/dashboard-stats', async (req, res) => {
       Asset.countDocuments({ ...baseFilter, status: 'Under Repair' })
     ]);
 
-    let returnedAssets, activeAllocations;
-    let recentAllocationsQuery = {};
-    let recentReturnsQuery = {};
-
+    const recentAllocationsQuery = {};
+    const recentReturnsQuery = {};
     if (validAssetTags) {
       recentAllocationsQuery.assetTagNumber = { $in: validAssetTags };
       recentReturnsQuery.assetTagNumber = { $in: validAssetTags };
-      [returnedAssets, activeAllocations] = await Promise.all([
-        Return.countDocuments({ assetTagNumber: { $in: validAssetTags } }),
-        Allocation.countDocuments({ assetTagNumber: { $in: validAssetTags } })
-      ]);
-    } else {
-      [returnedAssets, activeAllocations] = await Promise.all([
-        Return.countDocuments(),
-        Allocation.countDocuments()
-      ]);
     }
 
-    // Aggregations for charts
-    const assetsByDeviceType = await Asset.aggregate([
-      { $match: baseFilter },
-      { $group: { _id: '$deviceType', count: { $sum: 1 } } }
+    const [returnedAssets, activeAllocations] = await Promise.all([
+      Return.countDocuments(recentReturnsQuery),
+      Allocation.countDocuments(recentAllocationsQuery)
     ]);
 
-    const assetsByStatus = await Asset.aggregate([
-      { $match: baseFilter },
-      { $group: { _id: '$status', count: { $sum: 1 } } }
+    // Aggregations for charts
+    const [deviceTypeGroups, statusGroups, openAllocations] = await Promise.all([
+      // Case- and space-insensitive, so "Laptop", "LAPTOP" and " laptop" count as one type
+      Asset.aggregate([
+        { $match: baseFilter },
+        { $project: { type: { $trim: { input: { $toString: { $ifNull: ['$deviceType', ''] } } } } } },
+        { $group: { _id: { $toLower: '$type' }, count: { $sum: 1 }, variants: { $addToSet: '$type' } } },
+        { $sort: { count: -1 } }
+      ]),
+      Asset.aggregate([
+        { $match: baseFilter },
+        { $group: { _id: '$status', count: { $sum: 1 } } }
+      ]),
+      // Allocations still out with an employee
+      Allocation.countDocuments({ ...recentAllocationsQuery, status: { $ne: 'Returned' } })
     ]);
+
+    // Display name: keep a mixed-case spelling if one exists ("Laptop"), short codes upper-case
+    // ("UPS"), otherwise title-case ("MONITOR" -> "Monitor"). Blank / NA types become "Unspecified".
+    const BLANK_TYPES = new Set(['', 'na', 'n/a', '-', 'null', 'undefined']);
+    const typeLabel = (key, variants) => {
+      const mixed = variants.find((v) => v !== v.toUpperCase() && v !== v.toLowerCase());
+      if (mixed) return mixed;
+      if (key.length <= 3) return key.toUpperCase();
+      return key.replace(/\b\w/g, (ch) => ch.toUpperCase());
+    };
+    const assetsByDeviceType = [];
+    let unspecifiedCount = 0;
+    deviceTypeGroups.forEach((group) => {
+      if (BLANK_TYPES.has(group._id)) {
+        unspecifiedCount += group.count;
+        return;
+      }
+      const variants = group.variants.filter(Boolean).sort();
+      assetsByDeviceType.push({ _id: typeLabel(group._id, variants), count: group.count, variants });
+    });
+    if (unspecifiedCount) assetsByDeviceType.push({ _id: 'Unspecified', count: unspecifiedCount, variants: [] });
+
+    // Every status from the schema in a fixed order, so bars and colours never shift
+    const statusCounts = new Map(statusGroups.map((group) => [group._id || 'Unspecified', group.count]));
+    const assetsByStatus = Asset.schema.path('status').enumValues.map((status) => ({ _id: status, count: statusCounts.get(status) || 0 }));
+    statusCounts.forEach((count, status) => {
+      if (!assetsByStatus.some((s) => s._id === status)) assetsByStatus.push({ _id: status, count });
+    });
 
     const [recentActivities, recentAllocations, recentReturns] = await Promise.all([
       Asset.find(baseFilter).sort({ updatedAt: -1 }).limit(5).select('assetTagNumber deviceType status updatedAt').lean(),
@@ -502,60 +506,49 @@ router.get('/dashboard-stats', async (req, res) => {
       Return.find(recentReturnsQuery).sort({ returnDate: -1 }).limit(5).select('assetTagNumber employeeName deviceCondition returnDate penaltyAmount notes').lean()
     ]);
 
-    // Live 6-month trend data for advanced graphical representation
+    // Live 6-month trend (current month + 5 before), bucketed by calendar year AND month.
+    // Months are built from day 1, so "31 Aug minus 6 months" can't overflow into the wrong month.
     const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    const d = new Date();
-    const trendLabels = [];
-    const monthIndexes = []; // Store actual month indices to match data
-
+    const now = new Date();
+    const months = [];
     for (let i = 5; i >= 0; i--) {
-        const d2 = new Date();
-        d2.setMonth(d.getMonth() - i);
-        trendLabels.push(monthNames[d2.getMonth()]);
-        monthIndexes.push(d2.getMonth()); // Keep track of the month index (0-11) for this column
+      const month = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      months.push({
+        key: `${month.getFullYear()}-${month.getMonth()}`,
+        label: `${monthNames[month.getMonth()]} ${String(month.getFullYear()).slice(-2)}`
+      });
     }
+    const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
 
-    // Date boundary: 1st day of the month, 5 months ago (so it covers the current month + 5 previous)
-    const sixMonthsAgo = new Date();
-    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 5);
-    sixMonthsAgo.setDate(1);
-    sixMonthsAgo.setHours(0, 0, 0, 0);
-
-    // Fetch live raw data for the last 6 months
     const [liveAddedAssets, liveAllocations, liveReturns] = await Promise.all([
       Asset.find({ ...baseFilter, createdAt: { $gte: sixMonthsAgo } }).select('createdAt').lean(),
       Allocation.find({ ...recentAllocationsQuery, assignDate: { $gte: sixMonthsAgo } }).select('assignDate').lean(),
       Return.find({ ...recentReturnsQuery, returnDate: { $gte: sixMonthsAgo } }).select('returnDate').lean()
     ]);
 
-    // Initialize counts arrays with 0s
-    const addedCounts = [0, 0, 0, 0, 0, 0];
-    const allocatedCounts = [0, 0, 0, 0, 0, 0];
-    const returnedCounts = [0, 0, 0, 0, 0, 0];
-
-    // Helper to bucket data by month
-    const bucketData = (dataArray, dateField, targetArray) => {
-        dataArray.forEach(item => {
-            if (item[dateField]) {
-                const itemMonth = new Date(item[dateField]).getMonth();
-                // Find where this month sits in our rolling 6-month window
-                const index = monthIndexes.lastIndexOf(itemMonth);
-                if (index !== -1) {
-                    targetArray[index]++;
-                }
-            }
-        });
+    const bucketByMonth = (docs, dateField) => {
+      const counts = months.map(() => 0);
+      docs.forEach((doc) => {
+        if (!doc[dateField]) return;
+        const date = new Date(doc[dateField]);
+        const index = months.findIndex((m) => m.key === `${date.getFullYear()}-${date.getMonth()}`);
+        if (index !== -1) counts[index]++; // future-dated records fall outside the window
+      });
+      return counts;
     };
+    const sumOf = (values) => values.reduce((total, v) => total + v, 0);
 
-    bucketData(liveAddedAssets, 'createdAt', addedCounts);
-    bucketData(liveAllocations, 'assignDate', allocatedCounts);
-    bucketData(liveReturns, 'returnDate', returnedCounts);
+    const addedCounts = bucketByMonth(liveAddedAssets, 'createdAt');
+    const allocatedCounts = bucketByMonth(liveAllocations, 'assignDate');
+    const returnedCounts = bucketByMonth(liveReturns, 'returnDate');
 
     const trendData = {
-        labels: trendLabels,
-        added: addedCounts,
-        allocated: allocatedCounts,
-        returned: returnedCounts
+      labels: months.map((m) => m.label),
+      added: addedCounts,
+      allocated: allocatedCounts,
+      returned: returnedCounts,
+      net: allocatedCounts.map((v, i) => v - returnedCounts[i]),
+      totals: { added: sumOf(addedCounts), allocated: sumOf(allocatedCounts), returned: sumOf(returnedCounts) }
     };
 
     res.json({
@@ -565,7 +558,8 @@ router.get('/dashboard-stats', async (req, res) => {
         inStock,
         underRepair,
         returnedAssets,
-        activeAllocations
+        activeAllocations,
+        openAllocations
       },
       charts: {
         assetsByDeviceType,
@@ -574,69 +568,61 @@ router.get('/dashboard-stats', async (req, res) => {
       },
       recentActivities,
       recentAllocations,
-      recentReturns
+      recentReturns,
+      generatedAt: new Date()
     });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err, 'assets/dashboard-stats');
   }
 });
 
 // GET single asset
 router.get('/:id', async (req, res) => {
   try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ message: 'Invalid asset id.' });
     const asset = await Asset.findById(req.params.id).lean();
     if (!asset) return res.status(404).json({ message: 'Asset not found' });
     res.json(asset);
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err, 'assets/get');
   }
 });
 
 // POST new asset
-router.post('/', async (req, res) => {
-  const asset = new Asset(req.body);
+router.post('/', checkPermission('assets.html'), async (req, res) => {
   try {
-    const newAsset = await asset.save();
+    const newAsset = await Asset.create(pick(req.body, ASSET_FIELDS));
     res.status(201).json(newAsset);
   } catch (err) {
-    res.status(400).json({ message: err.message });
+    sendError(res, err, 'assets/create');
   }
 });
 
 // PUT update asset
-router.put('/:id', async (req, res) => {
+router.put('/:id', checkPermission('edit_asset'), async (req, res) => {
   try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ message: 'Invalid asset id.' });
     const updatedAsset = await Asset.findByIdAndUpdate(
       req.params.id,
-      req.body,
+      { $set: pick(req.body, ASSET_FIELDS) },
       { new: true, runValidators: true }
     );
     if (!updatedAsset) return res.status(404).json({ message: 'Asset not found' });
     res.json(updatedAsset);
   } catch (err) {
-    res.status(400).json({ message: err.message });
+    sendError(res, err, 'assets/update');
   }
 });
 
 // DELETE asset
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', checkPermission('delete_asset'), async (req, res) => {
   try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ message: 'Invalid asset id.' });
     const asset = await Asset.findByIdAndDelete(req.params.id);
     if (!asset) return res.status(404).json({ message: 'Asset not found' });
     res.json({ message: 'Asset deleted' });
   } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
-});
-
-module.exports = router;
-router.delete('/:id', async (req, res) => {
-  try {
-    const asset = await Asset.findByIdAndDelete(req.params.id);
-    if (!asset) return res.status(404).json({ message: 'Asset not found' });
-    res.json({ message: 'Asset deleted' });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendError(res, err, 'assets/delete');
   }
 });
 

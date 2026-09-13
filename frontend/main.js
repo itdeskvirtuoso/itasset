@@ -8,7 +8,43 @@
     const cache = new Map();
     const CACHE_TTL = 60000; // 60 seconds
 
+    // Every call to our API carries the signed-in user's token; a rejected session signs out
+    let signingOut = false;
+
+    function withAuth(options) {
+        let token = null;
+        try { token = localStorage.getItem('token'); } catch (e) { /* storage blocked */ }
+        if (!token) return options;
+        const headers = new Headers(options.headers || {});
+        if (!headers.has('Authorization')) headers.set('Authorization', 'Bearer ' + token);
+        return Object.assign({}, options, { headers });
+    }
+
+    function watchSession(url, response) {
+        if (signingOut || url.includes('/auth/login')) return response;
+        if (response.status === 401) {
+            signingOut = true;
+            logoutUser();
+        } else if (response.status === 403) {
+            response.clone().json().then((data) => {
+                if (data && data.code === 'ACCOUNT_BLOCKED' && !signingOut) {
+                    signingOut = true;
+                    logoutUser();
+                }
+            }).catch(() => { });
+        }
+        return response;
+    }
+
     window.fetch = async function(url, options = {}) {
+        if (typeof url === 'string' && url.includes('/api/')) {
+            const authed = withAuth(options);
+            return watchSession(url, await cachedFetch(url, authed));
+        }
+        return originalFetch(url, options);
+    };
+
+    async function cachedFetch(url, options) {
         const isGet = !options.method || options.method.toUpperCase() === 'GET';
         const noCache = options.cache === 'no-store' || (typeof url === 'string' && url.includes('_t='));
         
@@ -37,8 +73,30 @@
         }
         
         return originalFetch(url, options);
-    };
+    }
 })();
+
+// Escape text before it goes into innerHTML (database values can contain markup)
+function escapeHtml(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+}
+
+// Best message for a failed API call: the server's own explanation when it sent one
+async function apiErrorMessage(response, fallback) {
+    try {
+        const data = await response.clone().json();
+        if (data && data.message) return data.message;
+    } catch (e) { /* not JSON */ }
+    return fallback;
+}
+
+function currentUserRole() {
+    try {
+        return (JSON.parse(localStorage.getItem('user')) || {}).role || '';
+    } catch (e) {
+        return '';
+    }
+}
 
 function handleRouting() {
     let hash = window.location.hash || '#index';
@@ -182,14 +240,7 @@ function showToast(message, type = 'success') {
 
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
-    toast.style.background = type === 'success' ? '#10B981' : '#E11D48';
-    toast.style.color = '#fff';
-    toast.style.padding = '12px 20px';
-    toast.style.borderRadius = '8px';
-    toast.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
-    toast.style.fontFamily = 'Outfit, sans-serif';
-    toast.style.fontSize = '0.9rem';
-    toast.style.fontWeight = '500';
+    // Visual styling lives in components.css (.toast / .toast-{type})
     toast.style.opacity = '0';
     toast.style.transform = 'translateY(20px)';
     toast.style.transition = 'all 0.3s ease';
@@ -227,91 +278,226 @@ function showToast(message, type = 'success') {
 
 /* --- search.js --- */
 
+// Header search. The dropdown is moved to <body> and positioned under the
+// search bar so the header's clipping can never hide it.
 document.addEventListener('DOMContentLoaded', () => {
     const searchInput = document.getElementById('global-search-input');
-    const searchResults = document.getElementById('global-search-results');
+    const dropdown = document.getElementById('global-search-results');
+    if (!searchInput || !dropdown) return;
 
-    if (!searchInput || !searchResults) return;
-
-    // ------------------------------------
+    document.body.appendChild(dropdown);
+    dropdown.setAttribute('role', 'listbox');
+    searchInput.setAttribute('autocomplete', 'off');
+    searchInput.setAttribute('spellcheck', 'false');
 
     let debounceTimer;
+    let searchSeq = 0; // drops responses that arrive after a newer query
+    let results = [];
+    let activeIndex = -1;
+    let lastQuery = '';
 
-    searchInput.addEventListener('input', (e) => {
+    const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+    const mark = (v, q) => {
+        const text = String(v == null ? '' : v);
+        const i = q ? text.toLowerCase().indexOf(q.toLowerCase()) : -1;
+        if (i < 0) return esc(text);
+        return esc(text.slice(0, i)) + '<mark>' + esc(text.slice(i, i + q.length)) + '</mark>' + esc(text.slice(i + q.length));
+    };
+    const statusClass = (s) => (s || 'unknown').toLowerCase().replace(/\s+/g, '-');
+
+    function position() {
+        const bar = searchInput.closest('.search-bar') || searchInput;
+        const rect = bar.getBoundingClientRect();
+        const zoom = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--app-zoom')) || 1;
+        const vw = window.innerWidth;
+        const width = Math.min(Math.max(rect.width, 440), vw - 16);
+        let left = rect.right - width; // right-align with the search bar
+        if (left < 8) left = 8;
+        if (left + width > vw - 8) left = vw - 8 - width;
+        // The dropdown is zoomed like the app, so its CSS pixels are scaled by `zoom`
+        dropdown.style.width = (width / zoom) + 'px';
+        dropdown.style.left = (left / zoom) + 'px';
+        dropdown.style.top = ((rect.bottom + 6) / zoom) + 'px';
+    }
+
+    function open() {
+        position();
+        dropdown.classList.add('show');
+        searchInput.setAttribute('aria-expanded', 'true');
+    }
+
+    function close() {
+        dropdown.classList.remove('show');
+        searchInput.setAttribute('aria-expanded', 'false');
+        activeIndex = -1;
+    }
+
+    function setActive(index) {
+        const items = dropdown.querySelectorAll('.search-result-item');
+        if (!items.length) return;
+        activeIndex = (index + items.length) % items.length;
+        items.forEach((el, i) => el.classList.toggle('active', i === activeIndex));
+        items[activeIndex].scrollIntoView({ block: 'nearest' });
+    }
+
+    function openInReports(query) {
+        close();
+        searchInput.blur();
+        const reportsSearch = document.getElementById('reports-search');
+        if (reportsSearch) reportsSearch.value = query;
+        if (window.location.hash === '#reports') {
+            if (typeof renderReports === 'function') renderReports();
+        } else {
+            window.location.hash = '#reports'; // router loads the data and applies the search
+        }
+    }
+
+    function choose(asset) {
+        if (!asset) return;
+        const perms = window.userPermissions || [];
+        const canEdit = perms.includes('*') || perms.includes('edit_asset');
+        if (canEdit && typeof window.openEditModal === 'function') {
+            close();
+            searchInput.blur();
+            window.openEditModal(asset._id);
+        } else {
+            openInReports(asset.assetTagNumber || lastQuery);
+        }
+    }
+
+    function render(message) {
+        const q = lastQuery;
+        let body;
+        if (message) {
+            body = '<div class="search-dropdown-empty">' + message + '</div>';
+        } else if (!results.length) {
+            body = '<div class="search-dropdown-empty"><i class="fa-solid fa-magnifying-glass" style="margin-right:6px;"></i>No assets or software match “' + esc(q) + '”.</div>';
+        } else {
+            body = '<div class="search-dropdown-list">' + results.map((a, i) => {
+                const makeModel = [a.make, a.model && a.model !== a.make ? a.model : ''].filter(Boolean).join(' ');
+                const meta = [];
+                if (a.serialNumber && a.serialNumber !== a.assetTagNumber) meta.push('S/N ' + mark(a.serialNumber, q));
+                if (makeModel) meta.push(mark(makeModel, q));
+                const who = [];
+                if (a.assignedToName) who.push('<i class="fa-solid fa-user" style="margin-right:4px;"></i>' + mark(a.assignedToName, q));
+                if (a.employeeId) who.push('Emp ID ' + mark(a.employeeId, q));
+                return '<div class="search-result-item" role="option" data-index="' + i + '">' +
+                    '<div class="search-result-info">' +
+                    '<h4>' + mark(a.assetTagNumber || 'N/A', q) + ' <small>' + mark(a.deviceType || 'Unknown', q) + '</small></h4>' +
+                    (meta.length ? '<p>' + meta.join(' · ') + '</p>' : '') +
+                    (who.length ? '<p>' + who.join(' · ') + '</p>' : '') +
+                    '</div>' +
+                    '<span class="status-badge ' + statusClass(a.status) + '">' + esc(a.status || 'Unknown') + '</span>' +
+                    '</div>';
+            }).join('') + '</div>';
+        }
+
+        const head = results.length && !message
+            ? '<div class="search-dropdown-head">' + (results.length >= 10 ? 'Top 10 matches' : results.length + (results.length === 1 ? ' match' : ' matches')) + '</div>'
+            : '';
+        const foot = q && !message
+            ? '<div class="search-dropdown-foot"><span>↑↓ to move · Enter to open · Esc to close</span>' +
+              '<button type="button" data-action="reports">See all in Reports <i class="fa-solid fa-arrow-right"></i></button></div>'
+            : '';
+        dropdown.innerHTML = head + body + foot;
+        activeIndex = -1;
+        open();
+    }
+
+    async function runSearch(query) {
+        const seq = ++searchSeq;
+        lastQuery = query;
+        render('<i class="fa-solid fa-spinner fa-spin" style="margin-right:6px;"></i>Searching…');
+        try {
+            const ownership = window.getOwnershipQuery(true);
+            const response = await fetch(API_URL + '/assets/search' + ownership + (ownership ? '&q=' : '?q=') + encodeURIComponent(query));
+            if (!response.ok) throw new Error('Search failed');
+            const data = await response.json();
+            if (seq !== searchSeq) return;
+            results = Array.isArray(data) ? data : [];
+            render();
+        } catch (err) {
+            if (seq !== searchSeq) return;
+            console.error(err);
+            results = [];
+            render('<span style="color:#dc2626;">Search is unavailable. Is the backend running?</span>');
+        }
+    }
+
+    searchInput.addEventListener('input', () => {
         clearTimeout(debounceTimer);
-        const query = e.target.value.trim();
-
+        const query = searchInput.value.trim();
         if (query.length < 2) {
-            searchResults.classList.remove('show');
+            searchSeq++;
+            results = [];
+            lastQuery = '';
+            close();
             return;
         }
-
-        debounceTimer = setTimeout(async () => {
-            try {
-                const response = await fetch(API_URL + '/assets/search' + window.getOwnershipQuery(true) + (window.currentOwnershipFilter === 'All' ? '?q=' : '&q=') + encodeURIComponent(query));
-                if (!response.ok) throw new Error('Search failed');
-
-                const results = await response.json();
-
-                searchResults.innerHTML = '';
-
-                if (results.length === 0) {
-                    searchResults.innerHTML = '<div class="search-result-item"><div class="search-result-info"><p>No assets or software found.</p></div></div>';
-                } else {
-                    results.forEach(asset => {
-                        const item = document.createElement('div');
-                        item.className = 'search-result-item';
-                        item.style.cursor = 'pointer'; // Make it look clickable
-
-                        // Show assigned user and employee ID if available
-                        let assignedHtml = '';
-                        if (asset.assignedToName || asset.employeeId) {
-                            let parts = [];
-                            if (asset.assignedToName) parts.push(`Assign NAME: <strong>${asset.assignedToName}</strong>`);
-                            if (asset.employeeId) parts.push(`Emp ID: <strong>${asset.employeeId}</strong>`);
-                            assignedHtml = `<p style="font-size: 0.8rem; color: #64748b; margin-top: 4px;"><i class="fa-solid fa-user" style="margin-right: 4px;"></i> ${parts.join(' | ')}</p>`;
-                        }
-
-                        item.innerHTML = `
-                            <div class="search-result-info">
-                                <h4>${asset.assetTagNumber || 'N/A'} <span style="font-size: 0.8em; color: #64748b;">(${asset.deviceType || 'Unknown'})</span></h4>
-                                <p>${asset.make || ''} ${asset.model || ''}</p>
-                                ${assignedHtml}
-                            </div>
-                            <span class="status-badge" style="font-size: 0.7rem; align-self: flex-start;">${asset.status || 'Unknown'}</span>
-                        `;
-
-                        item.addEventListener('click', () => {
-                            // Close search results dropdown
-                            searchResults.classList.remove('show');
-
-                            // Open the popup modal accurately using the ID without redirecting
-                            if (typeof window.openEditModal === 'function') {
-                                window.openEditModal(asset._id);
-                            }
-                        });
-
-                        searchResults.appendChild(item);
-                    });
-                }
-
-                searchResults.classList.add('show');
-            } catch (err) {
-                console.error(err);
-            }
-        }, 300);
+        debounceTimer = setTimeout(() => runSearch(query), 250);
     });
 
-    document.addEventListener('click', (e) => {
-        if (!searchInput.contains(e.target) && !searchResults.contains(e.target)) {
-            searchResults.classList.remove('show');
+    searchInput.addEventListener('focus', () => {
+        if (searchInput.value.trim().length >= 2 && dropdown.innerHTML) open();
+    });
+
+    searchInput.addEventListener('keydown', (e) => {
+        const visible = dropdown.classList.contains('show');
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            if (!visible && searchInput.value.trim().length >= 2) open();
+            setActive(activeIndex + 1);
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setActive(activeIndex - 1);
+        } else if (e.key === 'Enter') {
+            const query = searchInput.value.trim();
+            if (!query) return;
+            e.preventDefault();
+            clearTimeout(debounceTimer);
+            if (activeIndex >= 0) choose(results[activeIndex]);
+            else if (results.length === 1 && lastQuery === query) choose(results[0]);
+            else openInReports(query);
+        } else if (e.key === 'Escape') {
+            if (visible) {
+                e.preventDefault();
+                close();
+            } else if (searchInput.value) {
+                searchInput.value = '';
+            }
         }
     });
+
+    // mousedown (not click) so the input's blur doesn't close the list first
+    dropdown.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        if (e.target.closest('[data-action="reports"]')) {
+            openInReports(searchInput.value.trim() || lastQuery);
+            return;
+        }
+        const item = e.target.closest('.search-result-item');
+        if (item) choose(results[Number(item.dataset.index)]);
+    });
+
+    dropdown.addEventListener('mousemove', (e) => {
+        const item = e.target.closest('.search-result-item');
+        if (item && Number(item.dataset.index) !== activeIndex) setActive(Number(item.dataset.index));
+    });
+
+    document.addEventListener('mousedown', (e) => {
+        if (!searchInput.contains(e.target) && !dropdown.contains(e.target)) close();
+    });
+
+    window.addEventListener('resize', () => {
+        if (dropdown.classList.contains('show')) position();
+    });
+    window.addEventListener('hashchange', close);
 });
 
 // ====== EDIT & DELETE ALLOCATIONS ====== //
+// Closes any edit modal; without an id it closes the asset editor
 window.closeEditModal = function (modalId) {
-    const modal = document.getElementById(modalId);
+    const modal = document.getElementById(modalId || 'edit-asset-modal');
     if (!modal) return;
     modal.style.opacity = '0';
     const content = modal.querySelector('.modal-content');
@@ -356,11 +542,12 @@ document.getElementById('edit-allocation-form')?.addEventListener('submit', asyn
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
-        if (!res.ok) throw new Error('Update failed');
+        if (!res.ok) throw new Error(await apiErrorMessage(res, 'Error updating allocation'));
 
         closeEditModal('editAllocationModal');
         showToast('Allocation updated successfully', 'success');
         fetchAllocations();
+        if (typeof fetchDashboardStats === 'function') fetchDashboardStats();
 
         // Also refresh KPI modal if it's open
         const kpiModal = document.getElementById('kpi-modal');
@@ -368,7 +555,7 @@ document.getElementById('edit-allocation-form')?.addEventListener('submit', asyn
             openKpiModal('Allocations');
         }
     } catch (err) {
-        showToast('Error updating allocation', 'error');
+        showToast(err.message || 'Error updating allocation', 'error');
     }
 });
 
@@ -388,9 +575,11 @@ window.deleteAllocation = async function (id) {
     if (!result.isConfirmed) return;
     try {
         const res = await fetch(`${API_URL}/allocations/${id}`, { method: 'DELETE' });
-        if (!res.ok) throw new Error('Delete failed');
-        showToast('Allocation deleted successfully', 'success');
+        if (!res.ok) throw new Error(await apiErrorMessage(res, 'Error deleting allocation'));
+        const data = await res.json().catch(() => ({}));
+        showToast(data.message || 'Allocation deleted successfully', 'success');
         fetchAllocations();
+        if (typeof fetchDashboardStats === 'function') fetchDashboardStats();
 
         // Refresh KPI modal if open
         const kpiModal = document.getElementById('kpi-modal');
@@ -398,7 +587,7 @@ window.deleteAllocation = async function (id) {
             openKpiModal('Allocations');
         }
     } catch (err) {
-        showToast('Error deleting allocation', 'error');
+        showToast(err.message || 'Error deleting allocation', 'error');
     }
 };
 
@@ -440,11 +629,12 @@ document.getElementById('edit-return-form')?.addEventListener('submit', async (e
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
-        if (!res.ok) throw new Error('Update failed');
+        if (!res.ok) throw new Error(await apiErrorMessage(res, 'Error updating return record'));
 
         closeEditModal('editReturnModal');
         showToast('Return record updated successfully', 'success');
         fetchReturns();
+        if (typeof fetchDashboardStats === 'function') fetchDashboardStats();
 
         // Refresh KPI modal if open
         const kpiModal = document.getElementById('kpi-modal');
@@ -452,7 +642,7 @@ document.getElementById('edit-return-form')?.addEventListener('submit', async (e
             openKpiModal('Returns');
         }
     } catch (err) {
-        showToast('Error updating return record', 'error');
+        showToast(err.message || 'Error updating return record', 'error');
     }
 });
 
@@ -472,9 +662,11 @@ window.deleteReturn = async function (id) {
     if (!result.isConfirmed) return;
     try {
         const res = await fetch(`${API_URL}/returns/${id}`, { method: 'DELETE' });
-        if (!res.ok) throw new Error('Delete failed');
-        showToast('Return deleted successfully', 'success');
+        if (!res.ok) throw new Error(await apiErrorMessage(res, 'Error deleting return record'));
+        const data = await res.json().catch(() => ({}));
+        showToast(data.message || 'Return deleted successfully', 'success');
         fetchReturns();
+        if (typeof fetchDashboardStats === 'function') fetchDashboardStats();
 
         // Refresh KPI modal if open
         const kpiModal = document.getElementById('kpi-modal');
@@ -482,7 +674,7 @@ window.deleteReturn = async function (id) {
             openKpiModal('Returns');
         }
     } catch (err) {
-        showToast('Error deleting return record', 'error');
+        showToast(err.message || 'Error deleting return record', 'error');
     }
 };
 
@@ -503,32 +695,30 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
     }
 
+    // Re-check the session against the database: an expired token or a deleted /
+    // blocked user is signed out; otherwise the header + sidebar show the user's
+    // current database record. Network errors keep the session as it is.
+    fetch(`${API_URL}/auth/me`, { headers: { Authorization: 'Bearer ' + token } })
+        .then((res) => {
+            if (res.status === 401 || res.status === 403) {
+                logoutUser();
+                return null;
+            }
+            return res.ok ? res.json() : null;
+        })
+        .then((data) => {
+            if (!data || !data.user) return;
+            let saved = {};
+            try { saved = JSON.parse(userStr) || {}; } catch (e) { /* replaced below */ }
+            localStorage.setItem('user', JSON.stringify(Object.assign(saved, data.user)));
+            renderSignedInUser(data.user);
+        })
+        .catch(() => { });
+
     // Set User Details in UI on the current page
     try {
         const user = JSON.parse(userStr);
-        const nameEl = document.getElementById('user-name');
-        const roleEl = document.getElementById('user-role');
-        const avatarEl = document.getElementById('user-avatar');
-
-        if (nameEl) {
-            nameEl.textContent = user.username;
-        }
-        if (roleEl) {
-            roleEl.textContent = user.role;
-        }
-        if (avatarEl) {
-            const nameParam = encodeURIComponent(user.username);
-            avatarEl.src = `https://ui-avatars.com/api/?name=${nameParam}&background=A855F7&color=fff`;
-        }
-
-        // Settings page specific fields
-        const profileNameInput = document.getElementById('profile-name');
-        const profileEmailInput = document.getElementById('profile-email');
-        const profileRoleInput = document.getElementById('profile-role');
-
-        if (profileNameInput) profileNameInput.value = user.username || '';
-        if (profileEmailInput) profileEmailInput.value = user.email || '';
-        if (profileRoleInput) profileRoleInput.value = user.role || '';
+        renderSignedInUser(user);
 
         // Fetch Role-Based Access Control (RBAC) dynamically
         const userRole = user.role;
@@ -541,27 +731,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 const allowedPages = roleObj ? roleObj.permissions : ['index.html'];
                 window.userPermissions = allowedPages;
 
-                // Enforce add_asset permission on Asset Master form
+                // Asset Master save and Excel import both add assets
+                const canAddAssets = allowedPages.includes('*') || allowedPages.includes('assets.html');
                 const saveAssetBtn = document.getElementById('save-asset-btn');
-                if (saveAssetBtn) {
-                    if (!allowedPages.includes('*') && !allowedPages.includes('assets.html')) {
-                        saveAssetBtn.style.display = 'none';
-                    } else {
-                        saveAssetBtn.style.display = 'inline-block';
-                    }
-                }
+                if (saveAssetBtn) saveAssetBtn.style.display = canAddAssets ? 'inline-block' : 'none';
+                const importBtn = document.getElementById('import-excel-btn');
+                if (importBtn) importBtn.hidden = !canAddAssets;
 
-                // 1. Check current page access
-                const currentPage = window.location.pathname.split('/').pop() || 'index.html';
-
-                // TEMPORARILY DISABLED FOR TESTING:
-                // if (currentPage !== 'auth.html' && !allowedPages.includes(currentPage)) {
-                //     showToast(`Access Denied! As a ${userRole}, you do not have permission to view this page.`, 'error');
-                //     window.location.hash = '#index';
-                //     return;
-                // }
-
-                // 2. Hide unauthorized sidebar links
+                // Hide unauthorized sidebar links (the server enforces the same permissions)
                 const navLinks = document.querySelectorAll('.nav-links li a');
                 navLinks.forEach(link => {
                     const href = link.getAttribute('href')?.substring(1) + '.html'; // e.g. #assets -> assets.html
@@ -577,23 +754,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
             })
             .catch(err => {
-                console.error('Error fetching dynamic roles, falling back to local defaults:', err);
-
-                // Graceful fallback using hardcoded permissions if the server hasn't been restarted yet
-                const fallbackPermissions = {
-                    'Super Admin': ['index.html', 'assets.html', 'allocations.html', 'returns.html', 'warranty.html', 'reports.html', 'settings.html'],
-                    'User 1': ['index.html', 'assets.html', 'returns.html', 'warranty.html', 'reports.html'],
-                    'User 2': ['index.html', 'allocations.html', 'reports.html']
-                };
-
-                const allowedPages = fallbackPermissions[userRole] || ['index.html'];
-
-                const currentPage = window.location.pathname.split('/').pop() || 'index.html';
-                // if (currentPage !== 'auth.html' && !allowedPages.includes(currentPage)) {
-                //     showToast(`Access Denied! As a ${userRole}, you do not have permission to view this page.`, 'error');
-                //     window.location.hash = '#index';
-                //     return;
-                // }
+                console.error('Error fetching role permissions:', err);
+                // Server unreachable: Super Admin keeps every link, everyone else only the dashboard
+                const allowedPages = userRole === 'Super Admin' ? ['*'] : ['index.html'];
+                window.userPermissions = allowedPages;
 
                 const navLinks = document.querySelectorAll('.nav-links li a');
                 navLinks.forEach(link => {
@@ -616,6 +780,28 @@ document.addEventListener('DOMContentLoaded', () => {
         logoutUser();
     }
 });
+
+// Shows the signed-in user in the sidebar footer and the header chip
+function renderSignedInUser(user) {
+    if (!user) return;
+    const name = user.username || '';
+    const role = user.role || '';
+    const setText = (id, text) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = text;
+    };
+    setText('user-name', name);
+    setText('user-role', role);
+    setText('hdr-user-name', name);
+    setText('hdr-user-initial', name.charAt(0));
+    const roleEl = document.getElementById('hdr-user-role');
+    if (roleEl) {
+        roleEl.textContent = role;
+        roleEl.dataset.role = role;
+    }
+    const chip = document.getElementById('hdr-user');
+    if (chip) chip.title = user.employeeId ? `My profile · ${name} (${user.employeeId})` : `My profile · ${name}`;
+}
 
 // Logout User globally
 function logoutUser() {
@@ -651,399 +837,533 @@ window.getOwnershipQuery = function (isFirstParam = true) {
     return (isFirstParam ? '?' : '&') + 'ownership=' + encodeURIComponent(window.currentOwnershipFilter);
 };
 
-// Chart instances
-let deviceTypeChartInstance = null;
-let statusChartInstance = null;
+// =======================================================
+// DASHBOARD — KPIs + charts, live from /assets/dashboard-stats.
+// Charts are created once and updated in place. The dashboard refreshes every
+// 30s while it is on screen, when the tab becomes visible again, and right after
+// other screens change assets (they call fetchDashboardStats()).
+// =======================================================
+const DASHBOARD_REFRESH_MS = 30000;
+const dashboardCharts = {}; // name -> Chart instance
+let dashboardRequest = null; // { query, promise } — collapses duplicate loads
+let dashboardLiveStarted = false;
 
-// Initialize Dashboard
-async function initDashboard() {
-    try {
-        const actBody = document.getElementById('recent-activities-body');
-        const allocBody = document.getElementById('recent-allocations-body');
-        const retBody = document.getElementById('recent-returns-body');
+// One palette for every chart, so a status keeps its colour everywhere
+const CHART_THEME = {
+    text: '#5b6472',
+    ink: '#0f172a',
+    grid: 'rgba(15, 23, 42, 0.06)',
+    font: "'Inter', system-ui, sans-serif",
+    series: ['#4f46e5', '#0ea5e9', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#64748b', '#84cc16'],
+    status: {
+        'In Use': '#4f46e5',
+        'In Stock': '#10b981',
+        'Under Repair': '#f59e0b',
+        'Returned': '#0ea5e9',
+        'Damaged': '#f97316',
+        'Lost': '#ef4444',
+        'Scrapped': '#94a3b8'
+    },
+    added: '#10b981',
+    allocated: '#4f46e5',
+    returned: '#f59e0b'
+};
+
+const CHART_TOOLTIP = {
+    backgroundColor: 'rgba(15, 23, 42, 0.92)',
+    titleColor: '#fff',
+    bodyColor: '#e2e8f0',
+    padding: 10,
+    cornerRadius: 10,
+    boxPadding: 4,
+    usePointStyle: true
+};
+
+const fmtCount = (n) => Number(n || 0).toLocaleString('en-IN');
+const sharePct = (part, whole) => (whole > 0 ? Math.round((part / whole) * 100) : 0);
+// "<1%" instead of a misleading "0%" when a non-zero share rounds down
+const shareText = (part, whole) => (part > 0 && sharePct(part, whole) === 0 ? '<1%' : `${sharePct(part, whole)}%`);
+const sumValues = (values) => (values || []).reduce((total, v) => total + (Number(v) || 0), 0);
+const dashText = (id, text) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+};
+const dashEscape = (value) => String(value).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+
+function hexToRgba(hex, alpha) {
+    const n = parseInt(hex.slice(1), 16);
+    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+}
+
+// Kept for any older callers; charts now use CHART_THEME
+function getChartColors() {
+    return { text: CHART_THEME.text, gridColor: CHART_THEME.grid, bg: CHART_THEME.series, border: CHART_THEME.series };
+}
+
+// Create the chart once; afterwards swap its data/options and animate the change
+function upsertChart(name, canvasId, config) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas || typeof Chart === 'undefined') return null;
+    Chart.defaults.font.family = CHART_THEME.font;
+    Chart.defaults.color = CHART_THEME.text;
+
+    const existing = dashboardCharts[name];
+    if (existing && existing.canvas === canvas) {
+        existing.data.labels = config.data.labels;
+        config.data.datasets.forEach((dataset, i) => {
+            if (existing.data.datasets[i]) Object.assign(existing.data.datasets[i], dataset);
+            else existing.data.datasets.push(dataset);
+        });
+        existing.data.datasets.length = config.data.datasets.length;
+        existing.options = config.options;
+        existing.update();
+        return existing;
+    }
+    if (existing) existing.destroy();
+    dashboardCharts[name] = new Chart(canvas.getContext('2d'), config);
+    return dashboardCharts[name];
+}
+
+// Initialize Dashboard (also the live refresh entry point)
+async function initDashboard({ silent = false } = {}) {
+    if (!document.getElementById('kpi-total')) return;
+    startDashboardLive();
+
+    const query = window.getOwnershipQuery();
+    if (dashboardRequest && dashboardRequest.query === query) return dashboardRequest.promise;
+
+    const promise = loadDashboard(query, silent).finally(() => {
+        if (dashboardRequest && dashboardRequest.promise === promise) dashboardRequest = null;
+    });
+    dashboardRequest = { query, promise };
+    return promise;
+}
+
+// Other screens call this after adding, allocating or returning an asset
+window.fetchDashboardStats = () => initDashboard({ silent: true });
+
+async function loadDashboard(query, silent) {
+    if (!silent) {
         const loadingRow = '<tr><td colspan="6" style="text-align: center; padding: 20px;"><i class="fa-solid fa-spinner fa-spin" style="margin-right:8px; color:var(--primary);"></i>Loading...</td></tr>';
-        if (actBody) actBody.innerHTML = loadingRow;
-        if (allocBody) allocBody.innerHTML = loadingRow;
-        if (retBody) retBody.innerHTML = loadingRow;
+        ['recent-activities-body', 'recent-allocations-body', 'recent-returns-body'].forEach((id) => {
+            const body = document.getElementById(id);
+            if (body) body.innerHTML = loadingRow;
+        });
+    }
 
-        // Fetch Dashboard Stats from Backend
-        let url = `${API_URL}/assets/dashboard-stats${window.getOwnershipQuery()}`;
-        const response = await fetch(url);
+    try {
+        const response = await fetch(`${API_URL}/assets/dashboard-stats${query}`, { cache: 'no-store' });
         if (!response.ok) throw new Error('Failed to fetch dashboard data. Backend may not be connected to DB.');
-
         const data = await response.json();
 
-        // Update KPIs with real data
-        document.getElementById('kpi-total').textContent = data.kpis?.totalAssets || 0;
-        document.getElementById('kpi-in-use').textContent = data.kpis?.inUse || 0;
-        document.getElementById('kpi-in-stock').textContent = data.kpis?.inStock || 0;
-        document.getElementById('kpi-repair').textContent = data.kpis?.underRepair || 0;
-        // Extract software, monitor, mouse, and keyboard count from the chart data
-        let softwareCount = 0;
-        let monitorCount = 0;
-        let mouseCount = 0;
-        let keyboardCount = 0;
-        if (data.charts && data.charts.assetsByDeviceType) {
-            const softwareData = data.charts.assetsByDeviceType.find(item => (item._id || '').toLowerCase() === 'software');
-            if (softwareData) softwareCount = softwareData.count;
+        // The ownership filter changed while this was loading; a newer request owns the screen
+        if (query !== window.getOwnershipQuery()) return;
 
-            const monitorData = data.charts.assetsByDeviceType.find(item => {
-                const type = (item._id || '').toLowerCase();
-                return type === 'monitor' || type === 'monitors';
-            });
-            if (monitorData) monitorCount = monitorData.count;
-
-            const mouseData = data.charts.assetsByDeviceType.find(item => {
-                const type = (item._id || '').toLowerCase();
-                return type === 'mouse';
-            });
-            if (mouseData) mouseCount = mouseData.count;
-
-            const keyboardData = data.charts.assetsByDeviceType.find(item => {
-                const type = (item._id || '').toLowerCase();
-                return type === 'keyboard';
-            });
-            if (keyboardData) keyboardCount = keyboardData.count;
-        }
-        document.getElementById('kpi-software').textContent = softwareCount;
-
-        const monitorKpiEl = document.getElementById('kpi-monitors');
-        if (monitorKpiEl) monitorKpiEl.textContent = monitorCount;
-
-        const mouseKpiEl = document.getElementById('kpi-mouse');
-        if (mouseKpiEl) mouseKpiEl.textContent = mouseCount;
-
-        const keyboardKpiEl = document.getElementById('kpi-keyboard');
-        if (keyboardKpiEl) keyboardKpiEl.textContent = keyboardCount;
-        if (document.getElementById('kpi-returns')) {
-            document.getElementById('kpi-returns').textContent = data.kpis?.returnedAssets || 0;
-        }
-        if (document.getElementById('kpi-allocations')) {
-            document.getElementById('kpi-allocations').textContent = data.kpis?.activeAllocations || 0;
-        }
-
-        // Render Charts with real data
+        renderDashboardKpis(data);
         try {
-            renderDeviceTypeChart(data.charts?.assetsByDeviceType || []);
-            renderStatusChart(data.charts?.assetsByStatus || []);
-            
-            // Advanced Graphical Representations (Idea 5)
-            if (data.charts?.trendData) {
-                renderTrendChart(data.charts.trendData);
-                renderUtilizationChart(data.kpis?.inUse || 0, data.kpis?.totalAssets || 1);
-                renderFlowChart(data.charts.trendData);
-            }
+            renderDashboardCharts(data);
         } catch (chartErr) {
             console.warn('Charts failed to render, possibly Chart.js is not loaded', chartErr);
         }
-
-        // Render Recent Activities
         renderRecentActivities(data.recentActivities || []);
-
+        setDashboardLiveStatus(true, data.generatedAt);
     } catch (error) {
         console.error('Backend connection error:', error);
+        setDashboardLiveStatus(false);
+        if (silent) return; // keep the last good numbers when a background refresh fails
+
         // Clean empty state if DB fails (No mock data as per user request)
-        document.getElementById('kpi-total').textContent = 0;
-        document.getElementById('kpi-in-use').textContent = 0;
-        document.getElementById('kpi-in-stock').textContent = 0;
-        document.getElementById('kpi-repair').textContent = 0;
-        if (document.getElementById('kpi-software')) document.getElementById('kpi-software').textContent = 0;
-        if (document.getElementById('kpi-returns')) document.getElementById('kpi-returns').textContent = 0;
-        if (document.getElementById('kpi-allocations')) document.getElementById('kpi-allocations').textContent = 0;
-
+        ['kpi-total', 'kpi-in-use', 'kpi-in-stock', 'kpi-repair', 'kpi-software', 'kpi-returns', 'kpi-allocations'].forEach((id) => dashText(id, 0));
         const recentActBody = document.getElementById('recent-activities-body');
-        if (recentActBody) recentActBody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: red;">Error: ${error.message}</td></tr>`;
-
-        renderDeviceTypeChart([]);
-        renderStatusChart([]);
+        if (recentActBody) recentActBody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: red;">Error: ${dashEscape(error.message)}</td></tr>`;
+        renderDashboardCharts({ kpis: {}, charts: {} });
     }
 }
 
-// Chart Configurations for Premium Red Theme
-function getChartColors() {
-    return {
-        text: '#030712',
-        gridColor: '#E5E7EB',
-        bg: [
-            '#E11D48', // premium red
-            '#030712', // deep black
-            '#10B981', // green
-            '#F59E0B', // orange
-            '#3B82F6', // blue
-            '#8B5CF6'  // purple
-        ],
-        border: [
-            '#E11D48',
-            '#030712',
-            '#10B981',
-            '#F59E0B',
-            '#3B82F6',
-            '#8B5CF6'
-        ]
+function renderDashboardKpis(data) {
+    const kpis = data.kpis || {};
+    const types = (data.charts && data.charts.assetsByDeviceType) || [];
+    // Device types arrive grouped case-insensitively from the server
+    const typeCount = (...names) => {
+        const match = types.find((item) => names.includes((item._id || '').toLowerCase()));
+        return match ? match.count : 0;
     };
+
+    dashText('kpi-total', kpis.totalAssets || 0);
+    dashText('kpi-in-use', kpis.inUse || 0);
+    dashText('kpi-in-stock', kpis.inStock || 0);
+    dashText('kpi-repair', kpis.underRepair || 0);
+    dashText('kpi-software', typeCount('software'));
+    dashText('kpi-monitors', typeCount('monitor', 'monitors'));
+    dashText('kpi-mouse', typeCount('mouse'));
+    dashText('kpi-keyboard', typeCount('keyboard'));
+    dashText('kpi-returns', kpis.returnedAssets || 0);
+    dashText('kpi-allocations', kpis.activeAllocations || 0);
 }
 
-function renderDeviceTypeChart(data) {
-    const ctx = document.getElementById('deviceTypeChart');
-    if (!ctx) return;
+function renderDashboardCharts(data) {
+    const kpis = data.kpis || {};
+    const charts = data.charts || {};
+    const statuses = charts.assetsByStatus || [];
+    const total = kpis.totalAssets || sumValues(statuses.map((s) => s.count));
 
-    const colors = getChartColors();
+    renderDeviceTypeChart(charts.assetsByDeviceType || [], total);
+    renderStatusChart(statuses, total);
+    renderTrendChart(charts.trendData);
+    renderUtilizationChart(statuses, kpis);
+    renderFlowChart(charts.trendData, kpis);
+}
 
-    // Transform data
-    const labels = data.length > 0 ? data.map(d => d._id) : ['No Data'];
-    const counts = data.length > 0 ? data.map(d => d.count) : [1];
+// --- Assets by Device Type: doughnut + clickable legend with counts and shares ---
+function renderDeviceTypeChart(types, total) {
+    const hasData = types.length > 0;
+    const colors = types.map((_, i) => CHART_THEME.series[i % CHART_THEME.series.length]);
 
-    // Light gray if no data
-    const bgColors = data.length > 0 ? colors.bg : ['#E5E7EB'];
-
-    if (deviceTypeChartInstance) deviceTypeChartInstance.destroy();
-
-    deviceTypeChartInstance = new Chart(ctx.getContext('2d'), {
+    const chart = upsertChart('deviceType', 'deviceTypeChart', {
         type: 'doughnut',
         data: {
-            labels: labels,
+            labels: hasData ? types.map((t) => t._id) : ['No data'],
             datasets: [{
-                data: counts,
-                backgroundColor: bgColors,
-                borderWidth: 0,
-                hoverOffset: 4
+                data: hasData ? types.map((t) => t.count) : [1],
+                backgroundColor: hasData ? colors : ['#e5e7eb'],
+                borderColor: '#fff',
+                borderWidth: 2,
+                hoverOffset: 6
             }]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            cutout: '70%',
+            cutout: '72%',
             plugins: {
-                legend: { position: 'bottom', labels: { color: colors.text, usePointStyle: true, padding: 20 } }
+                legend: { display: false },
+                tooltip: hasData
+                    ? { ...CHART_TOOLTIP, callbacks: { label: (item) => ` ${item.label}: ${fmtCount(item.raw)} (${shareText(item.raw, total)})` } }
+                    : { enabled: false }
             }
         }
     });
+
+    const legend = document.getElementById('device-type-legend');
+    if (legend) {
+        legend.innerHTML = hasData
+            ? types.map((t, i) => {
+                const merged = (t.variants || []).length > 1 ? ` title="Merged spellings: ${dashEscape(t.variants.join(', '))}"` : '';
+                const off = chart && typeof chart.getDataVisibility === 'function' && !chart.getDataVisibility(i) ? ' is-off' : '';
+                return `<li class="legend-item${off}" data-index="${i}"${merged}>
+                    <span class="dot" style="background:${colors[i]}"></span>
+                    <span class="name">${dashEscape(t._id)}</span>
+                    <span class="value">${fmtCount(t.count)}</span>
+                    <span class="share">${shareText(t.count, total)}</span>
+                </li>`;
+            }).join('')
+            : '<li class="empty">No assets yet</li>';
+    }
+    dashText('device-type-total', fmtCount(total));
+    dashText('device-type-meta', hasData ? `${types.length} type${types.length === 1 ? '' : 's'}` : '—');
 }
 
-function renderStatusChart(data) {
-    const ctx = document.getElementById('statusChart');
-    if (!ctx) return;
+// Count + share printed at the end of each status bar
+const statusBarLabels = {
+    id: 'statusBarLabels',
+    afterDatasetsDraw(chart) {
+        const dataset = chart.data.datasets[0];
+        if (!dataset) return;
+        const total = sumValues(dataset.data);
+        const { ctx } = chart;
+        ctx.save();
+        ctx.font = `600 11px ${CHART_THEME.font}`;
+        ctx.fillStyle = CHART_THEME.ink;
+        ctx.textBaseline = 'middle';
+        chart.getDatasetMeta(0).data.forEach((bar, i) => {
+            const value = Number(dataset.data[i]) || 0;
+            ctx.fillText(value > 0 ? `${fmtCount(value)} · ${shareText(value, total)}` : '0', bar.x + 6, bar.y);
+        });
+        ctx.restore();
+    }
+};
 
-    const colors = getChartColors();
+// --- Assets by Status: every status in a fixed order and colour ---
+function renderStatusChart(statuses, total) {
+    const labels = statuses.map((s) => s._id);
+    const counts = statuses.map((s) => s.count);
 
-    // Transform data
-    const labels = data.length > 0 ? data.map(d => d._id) : ['No Data'];
-    const counts = data.length > 0 ? data.map(d => d.count) : [0];
-    const bgColors = data.length > 0 ? colors.bg : ['#E5E7EB'];
-
-    if (statusChartInstance) statusChartInstance.destroy();
-
-    statusChartInstance = new Chart(ctx.getContext('2d'), {
+    upsertChart('status', 'statusChart', {
         type: 'bar',
         data: {
-            labels: labels,
+            labels,
             datasets: [{
                 label: 'Assets',
                 data: counts,
-                backgroundColor: bgColors,
-                borderRadius: 8,
-                borderWidth: 0
+                backgroundColor: labels.map((label) => CHART_THEME.status[label] || '#64748b'),
+                borderRadius: 6,
+                borderSkipped: false,
+                barThickness: 14
             }]
         },
         options: {
+            indexAxis: 'y',
             responsive: true,
             maintainAspectRatio: false,
-            plugins: {
-                legend: { display: false }
-            },
-            scales: {
-                y: {
-                    ticks: { color: colors.text, stepSize: 1, precision: 0 },
-                    grid: { color: colors.gridColor, drawBorder: false }
-                },
-                x: {
-                    ticks: { color: colors.text },
-                    grid: { display: false, drawBorder: false }
-                }
-            }
-        }
-    });
-}
-
-// =======================================================
-// ADVANCED GRAPHICAL REPRESENTATIONS (CHART.JS)
-// =======================================================
-
-let trendChartInstance = null;
-let utilizationChartInstance = null;
-let flowChartInstance = null;
-
-function renderTrendChart(trendData) {
-    const ctx = document.getElementById('trendChart');
-    if (!ctx) return;
-    
-    if (trendChartInstance) trendChartInstance.destroy();
-    
-    trendChartInstance = new Chart(ctx.getContext('2d'), {
-        type: 'line',
-        data: {
-            labels: trendData.labels,
-            datasets: [
-                {
-                    label: 'Assets Added',
-                    data: trendData.added,
-                    borderColor: '#10B981', // green
-                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                    borderWidth: 3,
-                    tension: 0.4, // smooth cubic interpolation
-                    fill: true,
-                    pointRadius: 0,
-                    pointHoverRadius: 6
-                },
-                {
-                    label: 'Allocated',
-                    data: trendData.allocated,
-                    borderColor: '#3B82F6', // blue
-                    borderWidth: 3,
-                    tension: 0.4,
-                    fill: false,
-                    pointRadius: 0,
-                    pointHoverRadius: 6
-                },
-                {
-                    label: 'Returned',
-                    data: trendData.returned,
-                    borderColor: '#F59E0B', // amber/orange
-                    backgroundColor: 'rgba(245, 158, 11, 0.1)',
-                    borderWidth: 3,
-                    tension: 0.4,
-                    fill: true,
-                    pointRadius: 0,
-                    pointHoverRadius: 6
-                }
-            ]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            interaction: {
-                mode: 'index',
-                intersect: false,
-            },
-            plugins: {
-                legend: { position: 'top', labels: { usePointStyle: true, boxWidth: 8, font: {weight: '600'} } },
-                tooltip: {
-                    backgroundColor: 'rgba(15, 23, 42, 0.95)',
-                    titleColor: '#fff',
-                    bodyColor: '#e2e8f0',
-                    padding: 12,
-                    cornerRadius: 12
-                }
-            },
-            scales: {
-                x: { grid: { display: false, drawBorder: false } },
-                y: { grid: { color: '#E5E7EB', borderDash: [5, 5], drawBorder: false }, beginAtZero: true }
-            }
-        }
-    });
-}
-
-function renderUtilizationChart(inUse, total) {
-    const ctx = document.getElementById('utilizationChart');
-    if (!ctx) return;
-    
-    if (utilizationChartInstance) utilizationChartInstance.destroy();
-    
-    const percentage = total > 0 ? Math.round((inUse / total) * 100) : 0;
-    
-    // Inline plugin to draw percentage in center of gauge
-    const gaugeTextPlugin = {
-        id: 'gaugeText',
-        beforeDraw(chart) {
-            const { ctx, width, height } = chart;
-            ctx.restore();
-            ctx.font = '800 24px Outfit, sans-serif';
-            ctx.textBaseline = 'middle';
-            ctx.fillStyle = '#1e293b';
-            const text = `${percentage}%`;
-            const textX = Math.round((width - ctx.measureText(text).width) / 2);
-            const textY = height - 10;
-            ctx.fillText(text, textX, textY);
-            ctx.save();
-        }
-    };
-    
-    utilizationChartInstance = new Chart(ctx.getContext('2d'), {
-        type: 'doughnut',
-        data: {
-            labels: ['In Use', 'Available'],
-            datasets: [{
-                data: [inUse, total - inUse],
-                backgroundColor: ['#3B82F6', '#E5E7EB'],
-                borderWidth: 0,
-                borderRadius: [10, 0] // Only round the active part
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            rotation: 270, // Start at left
-            circumference: 180, // Half circle
-            cutout: '75%',
+            layout: { padding: { right: 78 } },
             plugins: {
                 legend: { display: false },
-                tooltip: { enabled: false } // clean look
+                tooltip: { ...CHART_TOOLTIP, callbacks: { label: (item) => ` ${fmtCount(item.raw)} assets (${shareText(item.raw, total)})` } }
             },
-            animation: { animateScale: true, animateRotate: true, duration: 1500, easing: 'easeOutQuart' }
+            scales: {
+                x: {
+                    beginAtZero: true,
+                    ticks: { precision: 0, color: CHART_THEME.text },
+                    grid: { color: CHART_THEME.grid },
+                    border: { display: false }
+                },
+                y: {
+                    ticks: { color: CHART_THEME.ink, font: { weight: '600' } },
+                    grid: { display: false },
+                    border: { display: false }
+                }
+            }
         },
-        plugins: [gaugeTextPlugin]
+        plugins: [statusBarLabels]
     });
+
+    const active = statuses.filter((s) => s.count > 0).length;
+    dashText('status-meta', total > 0 ? `${active} of ${statuses.length} statuses in use` : 'No assets');
 }
 
-function renderFlowChart(trendData) {
-    const ctx = document.getElementById('flowChart');
-    if (!ctx) return;
-    
-    if (flowChartInstance) flowChartInstance.destroy();
-    
-    flowChartInstance = new Chart(ctx.getContext('2d'), {
+// --- Asset Lifecycle Trend: added / allocated / returned per month, toggle via the stat chips ---
+function renderTrendChart(trend) {
+    const t = trend || { labels: [], added: [], allocated: [], returned: [] };
+    const series = [
+        { label: 'Assets Added', key: 'added', color: CHART_THEME.added, fill: true },
+        { label: 'Allocated', key: 'allocated', color: CHART_THEME.allocated, fill: false },
+        { label: 'Returned', key: 'returned', color: CHART_THEME.returned, fill: false }
+    ];
+
+    const areaFill = (color) => (context) => {
+        const { ctx, chartArea } = context.chart;
+        if (!chartArea) return hexToRgba(color, 0.15);
+        const gradient = ctx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
+        gradient.addColorStop(0, hexToRgba(color, 0.28));
+        gradient.addColorStop(1, hexToRgba(color, 0));
+        return gradient;
+    };
+
+    const chart = upsertChart('trend', 'trendChart', {
+        type: 'line',
+        data: {
+            labels: t.labels || [],
+            datasets: series.map((s) => ({
+                label: s.label,
+                data: t[s.key] || [],
+                borderColor: s.color,
+                backgroundColor: s.fill ? areaFill(s.color) : s.color,
+                fill: s.fill,
+                tension: 0.35,
+                borderWidth: 2.5,
+                pointRadius: 3,
+                pointHoverRadius: 6,
+                pointBackgroundColor: '#fff',
+                pointBorderColor: s.color,
+                pointBorderWidth: 2
+            }))
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { display: false }, // the stat chips above act as the legend
+                tooltip: CHART_TOOLTIP
+            },
+            scales: {
+                x: { grid: { display: false }, border: { display: false } },
+                y: {
+                    beginAtZero: true,
+                    ticks: { precision: 0 },
+                    grid: { color: CHART_THEME.grid },
+                    border: { display: false }
+                }
+            }
+        }
+    });
+
+    const totals = t.totals || { added: sumValues(t.added), allocated: sumValues(t.allocated), returned: sumValues(t.returned) };
+    const stats = document.getElementById('trend-stats');
+    if (stats) {
+        stats.innerHTML = series.map((s, i) => {
+            const visible = !chart || chart.isDatasetVisible(i);
+            return `<button type="button" class="trend-stat${visible ? '' : ' is-off'}" data-index="${i}" aria-pressed="${visible}">
+                <span class="dot" style="background:${s.color}"></span>${s.label}<strong>${fmtCount(totals[s.key])}</strong>
+            </button>`;
+        }).join('') + '<span class="period">Last 6 months</span>';
+    }
+}
+
+// --- Stock Utilization: in use vs deployable stock (lost and scrapped excluded) ---
+function renderUtilizationChart(statuses, kpis) {
+    const count = (name) => (statuses.find((s) => s._id === name) || {}).count || 0;
+    const total = kpis.totalAssets || sumValues(statuses.map((s) => s.count));
+    const inUse = kpis.inUse != null ? kpis.inUse : count('In Use');
+    const inStock = kpis.inStock != null ? kpis.inStock : count('In Stock');
+    const repair = kpis.underRepair != null ? kpis.underRepair : count('Under Repair');
+    const deployable = Math.max(total - count('Lost') - count('Scrapped'), 0);
+    const other = Math.max(deployable - inUse - inStock - repair, 0); // returned, damaged
+    const percentage = sharePct(inUse, deployable);
+    const hasData = deployable > 0;
+
+    const segments = [
+        { label: 'In Use', value: inUse, color: CHART_THEME.status['In Use'] },
+        { label: 'In Stock', value: inStock, color: CHART_THEME.status['In Stock'] },
+        { label: 'Under Repair', value: repair, color: CHART_THEME.status['Under Repair'] },
+        { label: 'Other', value: other, color: '#cbd5e1' }
+    ];
+
+    upsertChart('utilization', 'utilizationChart', {
+        type: 'doughnut',
+        data: {
+            labels: hasData ? segments.map((s) => s.label) : ['No data'],
+            datasets: [{
+                data: hasData ? segments.map((s) => s.value) : [1],
+                backgroundColor: hasData ? segments.map((s) => s.color) : ['#e5e7eb'],
+                borderWidth: 0,
+                borderRadius: 4,
+                spacing: 2
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            rotation: -90,
+            circumference: 180,
+            cutout: '78%',
+            plugins: {
+                legend: { display: false },
+                tooltip: hasData
+                    ? { ...CHART_TOOLTIP, callbacks: { label: (item) => ` ${item.label}: ${fmtCount(item.raw)} (${shareText(item.raw, deployable)})` } }
+                    : { enabled: false }
+            }
+        }
+    });
+
+    dashText('utilization-pct', hasData ? `${percentage}%` : '--%');
+    const meta = document.getElementById('utilization-meta');
+    if (meta) {
+        const lowStock = hasData && inStock === 0;
+        meta.textContent = !hasData ? 'No assets' : lowStock ? 'No spare stock' : `${fmtCount(inStock)} spare`;
+        meta.classList.toggle('is-warn', lowStock || percentage >= 90);
+    }
+    const legend = document.getElementById('utilization-legend');
+    if (legend) {
+        legend.innerHTML = hasData
+            ? segments.filter((s) => s.value > 0 || s.label !== 'Other').map((s) =>
+                `<li><span class="dot" style="background:${s.color}"></span>${s.label} <strong>${fmtCount(s.value)}</strong></li>`).join('')
+            : '';
+    }
+}
+
+// --- Allocation Flow: allocations up, returns down, net line per month ---
+function renderFlowChart(trend, kpis) {
+    const t = trend || { labels: [], allocated: [], returned: [] };
+    const allocated = t.allocated || [];
+    const returned = t.returned || [];
+    const net = t.net || allocated.map((v, i) => v - (returned[i] || 0));
+    const hasActivity = sumValues(allocated) + sumValues(returned) > 0;
+
+    upsertChart('flow', 'flowChart', {
         type: 'bar',
         data: {
-            labels: trendData.labels,
+            labels: t.labels || [],
             datasets: [
-                {
-                    label: 'Allocated',
-                    data: trendData.allocated,
-                    backgroundColor: '#F59E0B', // orange
-                    borderRadius: 50,
-                    borderWidth: 0,
-                    barPercentage: 0.3,
-                    categoryPercentage: 0.5
-                },
-                {
-                    label: 'Returned',
-                    data: trendData.returned,
-                    backgroundColor: '#E11D48', // red
-                    borderRadius: 50,
-                    borderWidth: 0,
-                    barPercentage: 0.3,
-                    categoryPercentage: 0.5
-                }
+                { type: 'bar', label: 'Allocated', data: allocated, backgroundColor: CHART_THEME.allocated, borderRadius: 4, barPercentage: 0.8, categoryPercentage: 0.55 },
+                { type: 'bar', label: 'Returned', data: returned.map((v) => -v), backgroundColor: CHART_THEME.returned, borderRadius: 4, barPercentage: 0.8, categoryPercentage: 0.55 },
+                { type: 'line', label: 'Net out', data: net, borderColor: CHART_THEME.ink, borderWidth: 1.5, pointRadius: 2, pointBackgroundColor: CHART_THEME.ink, tension: 0.3 }
             ]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
             plugins: {
-                legend: { display: false }, // slim look
-                tooltip: {
-                    backgroundColor: 'rgba(15, 23, 42, 0.95)',
-                    titleColor: '#fff',
-                    bodyColor: '#e2e8f0',
-                    cornerRadius: 8
-                }
+                legend: { display: false },
+                tooltip: { ...CHART_TOOLTIP, callbacks: { label: (item) => ` ${item.dataset.label}: ${fmtCount(Math.abs(item.raw))}` } }
             },
             scales: {
-                x: { grid: { display: false, drawBorder: false } },
-                y: { display: false, beginAtZero: true } // hide y axis entirely for cleaner look
+                x: { grid: { display: false }, border: { display: false }, ticks: { font: { size: 10 } } },
+                y: {
+                    ticks: { display: false },
+                    border: { display: false },
+                    grid: { color: (context) => (context.tick && context.tick.value === 0 ? 'rgba(15, 23, 42, 0.25)' : 'transparent') }
+                }
             }
         }
     });
+
+    const empty = document.getElementById('flow-empty');
+    if (empty) empty.hidden = hasActivity;
+    const open = kpis.openAllocations != null ? kpis.openAllocations : null;
+    dashText('flow-meta', open != null ? `${fmtCount(open)} out now` : `${fmtCount(sumValues(allocated))} allocated`);
+}
+
+function setDashboardLiveStatus(ok, generatedAt) {
+    const badge = document.getElementById('dashboard-live');
+    if (!badge) return;
+    badge.classList.toggle('is-offline', !ok);
+    if (ok) {
+        const at = generatedAt ? new Date(generatedAt) : new Date();
+        dashText('dashboard-updated', `Live · ${at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`);
+        badge.title = 'Updates automatically every 30 seconds';
+    } else {
+        dashText('dashboard-updated', 'Offline · retrying');
+        badge.title = 'Could not reach the server; showing the last loaded numbers';
+    }
+}
+
+function dashboardOnScreen() {
+    const kpi = document.getElementById('kpi-total');
+    return !document.hidden && !!kpi && kpi.offsetParent !== null;
+}
+
+function startDashboardLive() {
+    if (dashboardLiveStarted) return;
+    dashboardLiveStarted = true;
+
+    setInterval(() => {
+        if (dashboardOnScreen()) initDashboard({ silent: true });
+    }, DASHBOARD_REFRESH_MS);
+    document.addEventListener('visibilitychange', () => {
+        if (dashboardOnScreen()) initDashboard({ silent: true });
+    });
+
+    // Legend clicks show / hide a device type slice
+    const legend = document.getElementById('device-type-legend');
+    if (legend) {
+        legend.addEventListener('click', (e) => {
+            const item = e.target.closest('li[data-index]');
+            const chart = dashboardCharts.deviceType;
+            if (!item || !chart) return;
+            const index = Number(item.dataset.index);
+            chart.toggleDataVisibility(index);
+            chart.update();
+            item.classList.toggle('is-off', !chart.getDataVisibility(index));
+        });
+    }
+
+    // Trend stat chips show / hide a series
+    const stats = document.getElementById('trend-stats');
+    if (stats) {
+        stats.addEventListener('click', (e) => {
+            const chip = e.target.closest('button[data-index]');
+            const chart = dashboardCharts.trend;
+            if (!chip || !chart) return;
+            const index = Number(chip.dataset.index);
+            const visible = !chart.isDatasetVisible(index);
+            chart.setDatasetVisibility(index, visible);
+            chart.update();
+            chip.classList.toggle('is-off', !visible);
+            chip.setAttribute('aria-pressed', String(visible));
+        });
+    }
 }
 
 function renderRecentActivities(activities) {
@@ -1064,9 +1384,9 @@ function renderRecentActivities(activities) {
 
         const row = `
             <tr>
-                <td><strong>${act.assetTagNumber || 'N/A'}</strong></td>
-                <td>${act.deviceType || 'N/A'}</td>
-                <td><span class="status-badge ${statusClass}">${act.status || 'Unknown'}</span></td>
+                <td><strong>${escapeHtml(act.assetTagNumber || 'N/A')}</strong></td>
+                <td>${escapeHtml(act.deviceType || 'N/A')}</td>
+                <td><span class="status-badge ${statusClass}">${escapeHtml(act.status || 'Unknown')}</span></td>
                 <td>${new Date(act.updatedAt || act.createdAt).toLocaleDateString()}</td>
             </tr>
         `;
@@ -1103,47 +1423,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    // Fetch and populate accurate user role stats
-    fetch(API_URL + '/auth/role-stats')
-        .then(res => res.json())
-        .then(data => {
-            let superAdminCount = 0;
-            let itAdminCount = 0;
-            let managerCount = 0;
-            let employeeCount = 0;
-
-            if (Array.isArray(data)) {
-                data.forEach(stat => {
-                    if (stat._id === 'Super Admin') superAdminCount = stat.count;
-                    if (stat._id === 'User 1') itAdminCount = stat.count;
-                    if (stat._id === 'User 2') managerCount = stat.count;
-                    if (stat._id === 'Employee') employeeCount = stat.count;
-                });
-            }
-
-            if (document.getElementById('count-super-admin')) document.getElementById('count-super-admin').textContent = superAdminCount;
-            if (document.getElementById('count-it-admin')) document.getElementById('count-it-admin').textContent = itAdminCount;
-            if (document.getElementById('count-manager')) document.getElementById('count-manager').textContent = managerCount;
-            if (document.getElementById('count-employee')) document.getElementById('count-employee').textContent = employeeCount;
-        })
-        .catch(err => console.error('Error fetching role stats:', err));
-
-    // Fetch roles to cache their permissions
-    fetchRoles();
 });
-
-var rolesCache = {};
-var currentEditingRole = '';
-var currentEditingRow = null;
-
-function fetchRoles() {
-    fetch(`${API_URL}/roles?_t=${Date.now()}`)
-        .then(res => res.json())
-        .then(roles => {
-            roles.forEach(r => rolesCache[r.name] = r.permissions);
-        })
-        .catch(err => console.error('Error fetching roles:', err));
-}
 
 
 
@@ -1250,19 +1530,7 @@ deviceTypeSelect.addEventListener('change', (e) => {
     }
 });
 
-// Notifications dropdown
-function toggleNotifications() {
-    document.getElementById('notif-dropdown').classList.toggle('show');
-}
-document.addEventListener('click', function (event) {
-    const dropdown = document.getElementById('notif-dropdown');
-    const btn = document.getElementById('notif-btn');
-    if (dropdown && btn && !btn.contains(event.target) && !dropdown.contains(event.target)) {
-        dropdown.classList.remove('show');
-    }
-});
-
-
+// Mobile sidebar drawer (header menu and close buttons)
 function toggleMobileMenu() {
     const sidebar = document.querySelector('.sidebar');
     if (sidebar) sidebar.classList.toggle('show-menu');
@@ -1314,16 +1582,6 @@ document.getElementById('allocation-form').addEventListener('submit', async func
     }
 });
 
-function toggleNotifications() {
-    document.getElementById('notif-dropdown').classList.toggle('show');
-}
-document.addEventListener('click', function (event) {
-    const dropdown = document.getElementById('notif-dropdown');
-    const btn = document.getElementById('notif-btn');
-    if (dropdown && btn && !btn.contains(event.target) && !dropdown.contains(event.target)) {
-        dropdown.classList.remove('show');
-    }
-});
 // Fetch and display allocations history
 async function fetchAllocations() {
     try {
@@ -1351,16 +1609,16 @@ async function fetchAllocations() {
 
             tbody.innerHTML += `
                 <tr>
-                    <td><strong>${alloc.employeeName}</strong></td>
-                    <td style="color: var(--blue-primary); font-weight: 600;">${alloc.assetTagNumber}</td>
-                    <td>${assignDate}</td>
-                    <td>${notes}</td>
-                    <td><span class="status-badge ${statusBadge}">${alloc.status}</span></td>
+                    <td><strong>${escapeHtml(alloc.employeeName)}</strong></td>
+                    <td style="color: var(--blue-primary); font-weight: 600;">${escapeHtml(alloc.assetTagNumber)}</td>
+                    <td>${escapeHtml(assignDate)}</td>
+                    <td>${escapeHtml(notes)}</td>
+                    <td><span class="status-badge ${statusBadge}">${escapeHtml(alloc.status)}</span></td>
                     <td style="text-align: center; white-space: nowrap;">
-                        <button class="action-btn edit-btn" onclick="openEditAllocationModal('${alloc._id}')" title="Edit">
+                        <button class="action-btn edit-btn" onclick="openEditAllocationModal('${escapeHtml(alloc._id)}')" title="Edit">
                             <i class="fa-solid fa-pen"></i>
                         </button>
-                        <button class="action-btn delete-btn" onclick="deleteAllocation('${alloc._id}')" title="Delete">
+                        <button class="action-btn delete-btn" onclick="deleteAllocation('${escapeHtml(alloc._id)}')" title="Delete">
                             <i class="fa-solid fa-trash"></i>
                         </button>
                     </td>
@@ -1386,6 +1644,8 @@ document.getElementById('return-form').addEventListener('submit', async function
     const deviceCondition = document.getElementById('ret-condition').value;
     const penaltyAmount = document.getElementById('ret-penalty').value || 0;
     const notes = document.getElementById('ret-notes').value.trim();
+    const restockInput = document.getElementById('ret-auto-restock');
+    const autoRestock = restockInput ? restockInput.checked : true;
 
     try {
         const response = await fetch(API_URL + '/returns', {
@@ -1397,14 +1657,15 @@ document.getElementById('return-form').addEventListener('submit', async function
                 returnDate,
                 deviceCondition,
                 penaltyAmount: parseFloat(penaltyAmount),
-                notes
+                notes,
+                autoRestock
             })
         });
 
-        const data = await response.json();
+        const data = await response.json().catch(() => ({}));
 
         if (response.ok) {
-            showToast('Asset returned successfully!', 'success');
+            showToast(data.message || 'Asset returned successfully!', 'success');
             document.getElementById('return-form').reset();
 
             // Refresh dashboards and data
@@ -1451,17 +1712,17 @@ async function fetchReturns() {
 
             tbody.innerHTML += `
                 <tr>
-                    <td style="color: var(--blue-primary); font-weight: 600;">${ret.assetTagNumber}</td>
-                    <td><strong>${ret.employeeName}</strong></td>
-                    <td>${returnDate}</td>
-                    <td><span style="font-weight: 600; color: ${conditionColor};">${ret.deviceCondition || 'Unknown'}</span></td>
-                    <td style="color: var(--red-primary); font-weight: 600;">${penalty}</td>
-                    <td>${notes}</td>
+                    <td style="color: var(--blue-primary); font-weight: 600;">${escapeHtml(ret.assetTagNumber)}</td>
+                    <td><strong>${escapeHtml(ret.employeeName)}</strong></td>
+                    <td>${escapeHtml(returnDate)}</td>
+                    <td><span style="font-weight: 600; color: ${conditionColor};">${escapeHtml(ret.deviceCondition || 'Unknown')}</span></td>
+                    <td style="color: var(--red-primary); font-weight: 600;">${escapeHtml(penalty)}</td>
+                    <td>${escapeHtml(notes)}</td>
                     <td style="text-align: center; white-space: nowrap;">
-                        <button class="action-btn edit-btn" onclick="openEditReturnModal('${ret._id}')" title="Edit">
+                        <button class="action-btn edit-btn" onclick="openEditReturnModal('${escapeHtml(ret._id)}')" title="Edit">
                             <i class="fa-solid fa-pen"></i>
                         </button>
-                        <button class="action-btn delete-btn" onclick="deleteReturn('${ret._id}')" title="Delete">
+                        <button class="action-btn delete-btn" onclick="deleteReturn('${escapeHtml(ret._id)}')" title="Delete">
                             <i class="fa-solid fa-trash"></i>
                         </button>
                     </td>
@@ -1476,37 +1737,19 @@ async function fetchReturns() {
     }
 }
 
-function toggleNotifications() {
-    document.getElementById('notif-dropdown').classList.toggle('show');
-}
-document.addEventListener('click', function (event) {
-    const dropdown = document.getElementById('notif-dropdown');
-    const btn = document.getElementById('notif-btn');
-    if (dropdown && btn && !btn.contains(event.target) && !dropdown.contains(event.target)) {
-        dropdown.classList.remove('show');
-    }
-});
-
-
-function toggleMobileMenu() {
-    const sidebar = document.querySelector('.sidebar');
-    if (sidebar) sidebar.classList.toggle('show-menu');
-}
-
-
 // ====== WARRANTY LOGIC ====== //
 
 let allAssets = [];
 let currentFilter = 'all';
 
-const now = new Date();
-const next30 = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-
+// "Now" is read on every call so a tab left open overnight stays correct
 function getWarrantyStatus(asset) {
     if (!asset.warrantyEndDate) return 'no-date';
-    const expiry = asset.warrantyEndDate ? new Date(asset.warrantyEndDate) : null;
+    const expiry = new Date(asset.warrantyEndDate);
+    if (isNaN(expiry.getTime())) return 'no-date';
+    const now = new Date();
     if (expiry < now) return 'expired';
-    if (expiry <= next30) return 'expiring';
+    if (expiry <= new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)) return 'expiring';
     return 'valid';
 }
 
@@ -1514,7 +1757,7 @@ function getDaysLeft(dateStr) {
     if (!dateStr) return '-';
     const expiry = new Date(dateStr);
     if (isNaN(expiry.getTime())) return '-';
-    const diff = Math.ceil((expiry - now) / (1000 * 60 * 60 * 24));
+    const diff = Math.ceil((expiry - new Date()) / (1000 * 60 * 60 * 24));
     if (diff < 0) return Math.abs(diff) + ' days ago';
     if (diff === 0) return 'Today';
     return diff + ' days left';
@@ -1548,23 +1791,23 @@ function renderTable(assets) {
             const row = document.createElement('tr');
             row.setAttribute('data-status', status);
             row.innerHTML =
-                '<td style="padding:16px;border-bottom:1px solid var(--border-soft);"><strong>' + (asset.assetTagNumber || 'N/A') + '</strong><br><small style="color:var(--text-muted);">' + (asset.srNo || '') + '</small></td>' +
-                '<td style="padding:16px;border-bottom:1px solid var(--border-soft);">' + (asset.deviceType || 'N/A') + (asset.make ? ' <span style="color:var(--text-muted);">(' + asset.make + ')</span>' : '') + '</td>' +
+                '<td style="padding:16px;border-bottom:1px solid var(--border-soft);"><strong>' + escapeHtml(asset.assetTagNumber || 'N/A') + '</strong><br><small style="color:var(--text-muted);">' + escapeHtml(asset.srNo || '') + '</small></td>' +
+                '<td style="padding:16px;border-bottom:1px solid var(--border-soft);">' + escapeHtml(asset.deviceType || 'N/A') + (asset.make ? ' <span style="color:var(--text-muted);">(' + escapeHtml(asset.make) + ')</span>' : '') + '</td>' +
 
                 '<td style="padding:16px;border-bottom:1px solid var(--border-soft);"><div style="display:flex; flex-direction:column; gap:4px;"><span>' + (expiry && !isNaN(expiry.getTime()) ? expiry.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-') + '</span><span style="font-size:0.75rem; color:var(--text-muted); font-weight:500; background:#f1f5f9; padding:2px 6px; border-radius:4px; width:fit-content;">' + daysLeft + '</span></div></td>' +
                 '<td style="padding:16px;border-bottom:1px solid var(--border-soft);"><span class="warranty-badge ' + badgeClass + '">' + badgeText + '</span></td>' +
-                '<td style="padding:16px;border-bottom:1px solid var(--border-soft);"><button class="vendor-btn" onclick="contactVendor(\'' + (asset.assetTagNumber || '') + '\')"><i class="fa-solid fa-phone"></i> Contact Vendor</button></td>';
+                '<td style="padding:16px;border-bottom:1px solid var(--border-soft);"><button class="vendor-btn" data-tag="' + escapeHtml(asset.assetTagNumber || '') + '" onclick="contactVendor(this.dataset.tag)"><i class="fa-solid fa-phone"></i> Contact Vendor</button></td>';
             tbody.appendChild(row);
         } catch (err) {
-            tbody.innerHTML += '<tr><td colspan="5" style="color:red; padding:10px;">Error rendering asset ' + asset.assetTagNumber + ': ' + err.message + '</td></tr>';
+            tbody.insertAdjacentHTML('beforeend', '<tr><td colspan="5" style="color:red; padding:10px;">Error rendering asset ' + escapeHtml(asset.assetTagNumber) + ': ' + escapeHtml(err.message) + '</td></tr>');
         }
     });
 }
 
 function applyFilter(filter) {
     currentFilter = filter;
-    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-    document.getElementById('filter-' + filter).classList.add('active');
+    document.querySelectorAll('#view-warranty .filter-bar .filter-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('filter-' + filter)?.classList.add('active');
     renderTable(allAssets);
 }
 
@@ -1609,211 +1852,322 @@ async function loadWarrantyData() {
     }
 }
 
-function toggleNotifications() {
-    document.getElementById('notif-dropdown').classList.toggle('show');
-}
-document.addEventListener('click', function (event) {
-    const dropdown = document.getElementById('notif-dropdown');
-    const btn = document.getElementById('notif-btn');
-    if (dropdown && btn && !btn.contains(event.target) && !dropdown.contains(event.target)) {
-        dropdown.classList.remove('show');
-    }
-});
-
-document.addEventListener('DOMContentLoaded', loadWarrantyData);
-
-
-function toggleMobileMenu() {
-    const sidebar = document.querySelector('.sidebar');
-    if (sidebar) sidebar.classList.toggle('show-menu');
-}
-
-
 // ====== REPORTS LOGIC ====== //
 
-async function exportData(type) {
-    try {
-        let endpoint = API_URL + '/' + type;
-        const response = await fetch(endpoint);
-        if (!response.ok) throw new Error('Failed to fetch data');
+// =======================================================
+// REPORTS — live inventory. Data is fetched once per visit / ownership change;
+// search and every filter run client-side on that cached list, so they are instant.
+// =======================================================
+const REPORTS_COLS = 13;
+const REPORTS_STATUS_ORDER = ['In Stock', 'In Use', 'Under Repair', 'Lost', 'Damaged', 'Returned', 'Scrapped'];
+const REPORTS_FILTER_IDS = ['reports-filter-day', 'reports-filter-month', 'reports-filter-year', 'reports-filter-device', 'reports-filter-status'];
+// "key:value" search prefixes -> asset fields
+const REPORTS_SEARCH_KEYS = {
+    tag: ['assetTagNumber'], serial: ['serialNumber'], sn: ['serialNumber'],
+    type: ['deviceType'], device: ['deviceType'], make: ['make'], model: ['model'],
+    status: ['status'], user: ['assignedToName'], name: ['assignedToName'],
+    emp: ['employeeId'], id: ['employeeId'], remark: ['remark'], sr: ['srNo'], vendor: ['vendorName']
+};
+const REPORTS_SEARCH_FIELDS = ['srNo', 'assetTagNumber', 'serialNumber', 'deviceType', 'make', 'model', 'softwareCategory',
+    'status', 'assignedToName', 'employeeId', 'remark', 'vendorName', 'macAddress', 'processor', 'os'];
 
-        const data = await response.json();
+const reportsState = { data: [], loaded: false, requestId: 0 };
 
-        if (!data || data.length === 0) {
-            showToast('No data available in the database to export.', 'warning');
-            return;
+function reportsEsc(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// Lowercase and strip spaces/dashes etc. so "latitude 5400" matches "Latitude-5400"
+function reportsCompact(value) {
+    return String(value == null ? '' : value).toLowerCase().replace(/[\s\-_./\\:,]+/g, '');
+}
+
+// Dates before 1990 are Excel-import junk (e.g. 1905) — treat them as missing
+function reportsValidDate(raw) {
+    if (!raw) return null;
+    const d = new Date(raw);
+    return isNaN(d.getTime()) || d.getFullYear() < 1990 ? null : d;
+}
+
+// Assign Date column; fall back to the record creation date
+function reportsDate(asset) {
+    return reportsValidDate(asset.purchaseDate) || reportsValidDate(asset.createdAt);
+}
+
+function parseReportsQuery(text) {
+    const terms = [];
+    (text || '').trim().split(/\s+/).filter(Boolean).forEach(part => {
+        const m = part.match(/^([a-z]+):(.*)$/i);
+        if (m && REPORTS_SEARCH_KEYS[m[1].toLowerCase()]) {
+            if (m[2]) terms.push({ fields: REPORTS_SEARCH_KEYS[m[1].toLowerCase()], value: reportsCompact(m[2]), raw: m[2] });
+        } else {
+            terms.push({ fields: REPORTS_SEARCH_FIELDS, value: reportsCompact(part), raw: part });
         }
+    });
+    return terms.filter(t => t.value);
+}
 
-        const allKeys = new Set();
-        data.forEach(row => Object.keys(row).forEach(k => allKeys.add(k)));
-        const headers = Array.from(allKeys).filter(k => k !== '_id' && k !== '__v');
-        const csvRows = [];
+// Every term must match some field (AND across terms)
+function reportsMatches(asset, terms) {
+    return terms.every(t => t.fields.some(f => reportsCompact(asset[f]).includes(t.value)));
+}
 
-        csvRows.push(headers.join(','));
+// Escape text and wrap search hits in <mark>
+function reportsHighlight(value, terms) {
+    const text = String(value == null ? '' : value);
+    if (!text || !terms.length) return reportsEsc(text);
+    const lower = text.toLowerCase();
+    const ranges = [];
+    terms.forEach(t => {
+        const needle = t.raw.toLowerCase();
+        if (!needle) return;
+        let i = lower.indexOf(needle);
+        while (i !== -1) {
+            ranges.push([i, i + needle.length]);
+            i = lower.indexOf(needle, i + needle.length);
+        }
+    });
+    if (!ranges.length) return reportsEsc(text);
+    ranges.sort((a, b) => a[0] - b[0]);
+    let out = '', pos = 0;
+    ranges.forEach(([s, e]) => {
+        if (e <= pos) return;
+        s = Math.max(s, pos);
+        out += reportsEsc(text.slice(pos, s)) + '<mark>' + reportsEsc(text.slice(s, e)) + '</mark>';
+        pos = e;
+    });
+    return out + reportsEsc(text.slice(pos));
+}
 
-        data.forEach(row => {
-            const values = headers.map(header => {
-                let val = row[header] === null || row[header] === undefined ? '' : row[header];
-                val = val.toString().replace(/"/g, '""');
-                if (val.search(/("|,|)/g) >= 0) {
-                    val = '"' + val + '"';
-                }
-                return val;
-            });
-            csvRows.push(values.join(','));
-        });
+function setSelectOptions(select, placeholder, options) {
+    if (!select) return;
+    const previous = select.value;
+    select.innerHTML = '<option value="">' + reportsEsc(placeholder) + '</option>' +
+        options.map(o => '<option value="' + reportsEsc(o.value) + '">' + reportsEsc(o.label) + '</option>').join('');
+    // Keep the user's choice if it still exists in the new data
+    select.value = options.some(o => o.value === previous) ? previous : '';
+}
 
-        const csvString = csvRows.join('\n');
+function buildReportsFilterOptions(data) {
+    const devices = new Map(); // lowercase -> label (merges "Laptop" / "LAPTOP")
+    const statuses = new Set();
+    data.forEach(a => {
+        const type = (a.deviceType || '').trim();
+        if (type && !devices.has(type.toLowerCase())) {
+            devices.set(type.toLowerCase(), type.charAt(0).toUpperCase() + type.slice(1).toLowerCase());
+        }
+        if (a.status) statuses.add(a.status);
+    });
 
-        const blob = new Blob([csvString], { type: 'text/csv' });
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.setAttribute('hidden', '');
-        a.setAttribute('href', url);
-        a.setAttribute('download', type + '_export_' + new Date().toISOString().split('T')[0] + '.csv');
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
+    setSelectOptions(document.getElementById('reports-filter-device'), 'All device types',
+        [...devices.entries()].sort((a, b) => a[1].localeCompare(b[1])).map(([value, label]) => ({ value, label })));
+    // Always offer every status, plus any unexpected ones found in the data
+    const statusList = REPORTS_STATUS_ORDER
+        .concat([...statuses].filter(s => !REPORTS_STATUS_ORDER.includes(s)).sort());
+    setSelectOptions(document.getElementById('reports-filter-status'), 'All statuses',
+        statusList.map(s => ({ value: s, label: s })));
+}
 
-    } catch (err) {
-        console.error(err);
-        showToast('Export failed. Ensure backend is running.', 'error');
+function getReportsFilters() {
+    const val = id => document.getElementById(id)?.value || '';
+    return {
+        query: document.getElementById('reports-search')?.value || '',
+        day: val('reports-filter-day'),
+        month: val('reports-filter-month'),
+        year: val('reports-filter-year'),
+        device: val('reports-filter-device'),
+        status: val('reports-filter-status')
+    };
+}
+
+function reportsStatusClass(status) {
+    return (status || 'unknown').toLowerCase().replace(/\s+/g, '-');
+}
+
+function renderReports() {
+    const tbody = document.getElementById('reports-table-body');
+    const countEl = document.getElementById('reports-count');
+    const resetBtn = document.getElementById('reports-reset');
+    const clearBtn = document.getElementById('reports-search-clear');
+    if (!tbody) return;
+
+    const f = getReportsFilters();
+    const terms = parseReportsQuery(f.query);
+    const hasFilters = !!(f.query.trim() || f.day || f.month || f.year || f.device || f.status);
+    if (clearBtn) clearBtn.hidden = !f.query;
+    if (resetBtn) resetBtn.disabled = !hasFilters;
+
+    const all = reportsState.data;
+    const filtered = all.filter(a => {
+        if (f.device && (a.deviceType || '').trim().toLowerCase() !== f.device) return false;
+        if (f.status && a.status !== f.status) return false;
+        if (f.day || f.month || f.year) {
+            const d = reportsDate(a);
+            if (!d) return false;
+            if (f.year && String(d.getFullYear()) !== f.year) return false;
+            if (f.month && String(d.getMonth()) !== f.month) return false;
+            if (f.day && String(d.getDate()) !== f.day) return false;
+        }
+        return !terms.length || reportsMatches(a, terms);
+    });
+
+    window.currentReportsFilteredData = filtered;
+
+    if (countEl) {
+        countEl.innerHTML = filtered.length === all.length
+            ? '<strong>' + all.length + '</strong> assets'
+            : '<strong>' + filtered.length + '</strong> of ' + all.length + ' assets';
     }
+
+    if (!filtered.length) {
+        tbody.innerHTML = '<tr><td colspan="' + REPORTS_COLS + '" class="inventory-empty">' +
+            (all.length
+                ? 'No assets match your search or filters.<br><button type="button" class="secondary-btn btn-sm" onclick="clearReportsFilters()"><i class="fa-solid fa-rotate-left"></i> Clear filters</button>'
+                : 'No assets found in database.') +
+            '</td></tr>';
+        return;
+    }
+
+    const perms = window.userPermissions || [];
+    const canEdit = perms.includes('*') || perms.includes('edit_asset');
+    const canDelete = perms.includes('*') || perms.includes('delete_asset');
+    const hl = value => reportsHighlight(value, terms);
+    const fmtDate = v => {
+        const d = reportsValidDate(v);
+        return d ? d.toLocaleDateString() : '-';
+    };
+
+    tbody.innerHTML = filtered.map(a => {
+        const id = reportsEsc(a._id);
+        return '<tr>' +
+            '<td>' + (a.srNo ? hl(a.srNo) : 'N/A') + '</td>' +
+            '<td><strong>' + (a.assetTagNumber ? hl(a.assetTagNumber) : 'N/A') + '</strong></td>' +
+            '<td>' + (a.serialNumber ? hl(a.serialNumber) : 'N/A') + '</td>' +
+            '<td>' + (a.deviceType ? hl(a.deviceType) : 'N/A') + '</td>' +
+            '<td>' + (a.make ? hl(a.make) : 'N/A') +
+            (a.model && a.model !== a.make ? '<div class="cell-sub">' + hl(a.model) + '</div>' : '') + '</td>' +
+            '<td style="display:none;">' + reportsEsc(a.softwareCategory || '') + '</td>' +
+            '<td>' + fmtDate(a.purchaseDate) + '</td>' +
+            '<td>' + fmtDate(a.warrantyEndDate) + '</td>' +
+            '<td>' + (a.remark ? hl(a.remark) : '-') + '</td>' +
+            '<td><span class="status-badge ' + reportsStatusClass(a.status) + '">' + hl(a.status || 'Unknown') + '</span></td>' +
+            '<td class="cell-user"><i class="fa-solid fa-user-circle"></i>' + (a.assignedToName ? hl(a.assignedToName) : 'Unassigned') + '</td>' +
+            '<td>' + (a.employeeId ? hl(a.employeeId) : '-') + '</td>' +
+            '<td>' +
+            (canEdit ? '<button class="icon-action" title="Edit" onclick="openEditModal(\'' + id + '\')"><i class="fa-solid fa-pen"></i></button>' : '') +
+            (canDelete ? '<button class="icon-action danger" title="Delete" onclick="deleteAsset(\'' + id + '\')"><i class="fa-solid fa-trash"></i></button>' : '') +
+            '</td></tr>';
+    }).join('');
 }
 
 async function fetchReportsData() {
+    const tbody = document.getElementById('reports-table-body');
+    const countEl = document.getElementById('reports-count');
+    if (!tbody) return;
+    bindReportsControls();
+
+    const requestId = ++reportsState.requestId;
+    if (!reportsState.loaded) {
+        tbody.innerHTML = '<tr><td colspan="' + REPORTS_COLS + '" class="inventory-empty"><i class="fa-solid fa-spinner fa-spin"></i> Loading data…</td></tr>';
+    }
+    if (countEl) countEl.textContent = 'Loading…';
+
     try {
-        const tbody = document.getElementById('reports-table-body');
-        if (tbody) tbody.innerHTML = '<tr><td colspan="12" style="text-align: center; padding: 40px;"><i class="fa-solid fa-spinner fa-spin" style="font-size: 2rem; color: var(--primary);"></i><br><br>Loading data...</td></tr>';
-
         const response = await fetch(API_URL + '/assets' + window.getOwnershipQuery());
-        if (!response.ok) throw new Error('Failed to fetch data');
-
+        if (!response.ok) throw new Error('Failed to fetch data (' + response.status + ')');
         const data = await response.json();
-        if (tbody) tbody.innerHTML = '';
+        if (requestId !== reportsState.requestId) return; // a newer load superseded this one
 
-        let filtered = data;
-
-        // Apply UI Filters
-        const filterDay = document.getElementById('reports-filter-day')?.value || '';
-        const filterMonth = document.getElementById('reports-filter-month')?.value || '';
-        const filterYear = document.getElementById('reports-filter-year')?.value || '';
-        const filterDevice = document.getElementById('reports-filter-device')?.value || '';
-
-        if (filterDevice) {
-            filtered = filtered.filter(a => (a.deviceType || '').toLowerCase() === filterDevice.toLowerCase());
-        }
-
-        if (filterDay || filterMonth || filterYear) {
-            filtered = filtered.filter(a => {
-                if (!a.createdAt) return false;
-                const date = new Date(a.createdAt);
-                let match = true;
-                if (filterYear && date.getFullYear().toString() !== filterYear) match = false;
-                if (filterMonth && date.getMonth().toString() !== filterMonth) match = false;
-                if (filterDay && date.getDate().toString() !== filterDay) match = false;
-                return match;
-            });
-        }
-
-        window.currentReportsFilteredData = filtered;
-
-        if (!filtered || filtered.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="12" style="text-align: center; padding: 40px; color: var(--text-muted);">No assets found in database.</td></tr>';
-            return;
-        }
-
-        filtered.forEach(asset => {
-            try {
-                let statusClass = 'in-stock';
-                if (asset.status === 'In Use') statusClass = 'in-use';
-                if (asset.status === 'Under Repair') statusClass = 'under-repair';
-
-                const row = document.createElement('tr');
-                row.innerHTML =
-                    '<td style="padding:16px;">' + (asset.srNo || 'N/A') + '</td>' +
-                    '<td style="padding:16px;"><strong>' + (asset.assetTagNumber || 'N/A') + '</strong></td>' +
-                    '<td style="padding:16px;">' + (asset.serialNumber || 'N/A') + '</td>' +
-                    '<td style="padding:16px;">' + (asset.deviceType || 'N/A') + '</td>' +
-                    '<td style="padding:16px;">' + (asset.make || 'N/A') + '</td>' +
-                    '<td style="padding:16px; display:none;">' + (asset.model || 'N/A') + '</td>' +
-                    '<td style="padding:16px;">' + (asset.purchaseDate ? new Date(asset.purchaseDate).toLocaleDateString() : '-') + '</td>' +
-                    '<td style="padding:16px;">' + (asset.warrantyEndDate ? new Date(asset.warrantyEndDate).toLocaleDateString() : '-') + '</td>' +
-                    '<td style="padding:16px;">' + (asset.remark || '-') + '</td>' +
-                    '<td style="padding:16px;"><span class="status-badge ' + statusClass + '">' + (asset.status || 'Unknown') + '</span></td>' +
-                    '<td style="padding:16px; color: var(--text-main); font-weight: 500;"><i class="fa-solid fa-user-circle" style="color: #cbd5e1; margin-right: 5px;"></i>' + (asset.assignedToName || 'Unassigned') + '</td>' +
-                    '<td style="padding:16px;">' + (asset.employeeId || '-') + '</td>' +
-                    '<td style="padding:16px;">' +
-                    ((window.userPermissions && (window.userPermissions.includes('*') || window.userPermissions.includes('edit_asset'))) ? `<button onclick="openEditModal('${asset._id}')" style="background:none;border:none;color:var(--primary);cursor:pointer;margin-right:12px;font-size:1.1rem;transition:0.2s;" onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'"><i class="fa-solid fa-pen"></i></button>` : '') +
-                    ((window.userPermissions && (window.userPermissions.includes('*') || window.userPermissions.includes('delete_asset'))) ? `<button onclick="deleteAsset('${asset._id}')" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:1.1rem;transition:0.2s;" onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'"><i class="fa-solid fa-trash"></i></button>` : '') +
-                    '</td>';
-                tbody.appendChild(row);
-            } catch (err) { console.error('Error rendering row for asset', asset, err); }
-        });
+        reportsState.data = Array.isArray(data) ? data : (data.assets || data.data || []);
+        reportsState.loaded = true;
+        buildReportsFilterOptions(reportsState.data);
+        renderReports();
     } catch (err) {
+        if (requestId !== reportsState.requestId) return;
         console.error(err);
         showToast('Database loading failed. Is the backend running?', 'error');
-        document.getElementById('reports-table-body').innerHTML = `<tr><td colspan="12" style="text-align: center; padding: 40px; color: var(--red-primary);">Error: ${err.message}</td></tr>`;
+        if (countEl) countEl.textContent = '';
+        tbody.innerHTML = '<tr><td colspan="' + REPORTS_COLS + '" class="inventory-empty" style="color:#dc2626;">Error: ' + reportsEsc(err.message) + '</td></tr>';
     }
 }
 
-window.applyReportsFilters = function () {
-    fetchReportsData();
-};
+let reportsControlsBound = false;
+function bindReportsControls() {
+    if (reportsControlsBound) return;
+    const search = document.getElementById('reports-search');
+    if (!search) return;
+    reportsControlsBound = true;
+
+    let timer = null;
+    search.addEventListener('input', () => {
+        clearTimeout(timer);
+        timer = setTimeout(renderReports, 120);
+    });
+    search.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && search.value) {
+            e.preventDefault();
+            search.value = '';
+            renderReports();
+        }
+    });
+
+    const clearBtn = document.getElementById('reports-search-clear');
+    if (clearBtn) clearBtn.addEventListener('click', () => {
+        search.value = '';
+        renderReports();
+        search.focus();
+    });
+
+    REPORTS_FILTER_IDS.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('change', renderReports);
+    });
+
+    // "/" focuses the search while the Reports view is open
+    document.addEventListener('keydown', e => {
+        if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return;
+        const view = document.getElementById('view-reports');
+        if (!view || view.style.display === 'none') return;
+        const t = e.target;
+        if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+        e.preventDefault();
+        search.focus();
+        search.select();
+    });
+}
+
+window.applyReportsFilters = renderReports;
 
 window.clearReportsFilters = function () {
-    if (document.getElementById('reports-filter-day')) document.getElementById('reports-filter-day').value = '';
-    if (document.getElementById('reports-filter-month')) document.getElementById('reports-filter-month').value = '';
-    if (document.getElementById('reports-filter-year')) document.getElementById('reports-filter-year').value = '';
-    if (document.getElementById('reports-filter-device')) document.getElementById('reports-filter-device').value = '';
-    fetchReportsData();
+    const search = document.getElementById('reports-search');
+    if (search) search.value = '';
+    REPORTS_FILTER_IDS.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+    renderReports();
 };
 
-function toggleNotifications() {
-    document.getElementById('notif-dropdown').classList.toggle('show');
+// Every Year dropdown on the site (select[data-year-range]) lists 2026–2100
+const YEAR_RANGE_START = 2026;
+const YEAR_RANGE_END = 2100;
+function fillYearSelects() {
+    const options = [];
+    for (let y = YEAR_RANGE_START; y <= YEAR_RANGE_END; y++) options.push('<option value="' + y + '">' + y + '</option>');
+    document.querySelectorAll('select[data-year-range]').forEach(select => {
+        const previous = select.value;
+        select.innerHTML = '<option value="">Year</option>' + options.join('');
+        select.value = previous;
+    });
 }
-document.addEventListener('click', function (event) {
-    const dropdown = document.getElementById('notif-dropdown');
-    const btn = document.getElementById('notif-btn');
-    if (dropdown && btn && !btn.contains(event.target) && !dropdown.contains(event.target)) {
-        dropdown.classList.remove('show');
-    }
+
+// Reports data loads via the router (#reports); only wire up the controls here
+document.addEventListener('DOMContentLoaded', () => {
+    fillYearSelects();
+    bindReportsControls();
 });
-
-document.addEventListener('DOMContentLoaded', fetchReportsData);
-
-
-function toggleMobileMenu() {
-    const sidebar = document.querySelector('.sidebar');
-    if (sidebar) sidebar.classList.toggle('show-menu');
-}
-
-
-// ====== SETTINGS LOGIC ====== //
-
-function toggleNotifications() {
-    const dropdown = document.getElementById('notif-dropdown');
-    if (dropdown) {
-        dropdown.classList.toggle('show');
-    }
-}
-
-// Close dropdown when clicking outside
-document.addEventListener('click', function (event) {
-    const dropdown = document.getElementById('notif-dropdown');
-    const btn = document.getElementById('notif-btn');
-    if (dropdown && btn && !btn.contains(event.target) && !dropdown.contains(event.target)) {
-        dropdown.classList.remove('show');
-    }
-});
-
-
-function toggleMobileMenu() {
-    const sidebar = document.querySelector('.sidebar');
-    if (sidebar) sidebar.classList.toggle('show-menu');
-}
-
-
 
 // ==========================================
 // SETTINGS LOGIC
@@ -1826,19 +2180,9 @@ var rolesCache = {};
 function fetchSettingsData() {
     fetchRoles();
 
-    // User Management visibility
-    const userStr = localStorage.getItem('user');
-    if (userStr) {
-        const user = JSON.parse(userStr);
-        const userMgmtSection = document.getElementById('user-management-section');
-        if (userMgmtSection) {
-            if (user.role === 'Super Admin') {
-                userMgmtSection.style.display = 'grid';
-            } else {
-                userMgmtSection.style.display = 'none';
-            }
-        }
-    }
+    // Creating logins is Super Admin only
+    const addLoginBtn = document.getElementById('add-login-btn');
+    if (addLoginBtn) addLoginBtn.hidden = currentUserRole() !== 'Super Admin';
 }
 
 // User Management Form Submission
@@ -1847,13 +2191,22 @@ document.addEventListener('DOMContentLoaded', () => {
     if (intRegForm) {
         intRegForm.addEventListener('submit', async (e) => {
             e.preventDefault();
-            const username = document.getElementById('int-reg-username').value;
+            const username = document.getElementById('int-reg-username').value.trim();
             const role = document.getElementById('int-reg-role').value;
             const password = document.getElementById('int-reg-password').value;
             const btn = document.getElementById('int-reg-submit');
 
+            // Same rules as the server, so the new user signs in with exactly these details
+            if (!/^[a-zA-Z0-9._-]{3,32}$/.test(username)) {
+                showToast('Username must be 3–32 characters: letters, numbers, dot, dash or underscore.', 'error');
+                return;
+            }
+            if (!role) {
+                showToast('Please select a role.', 'error');
+                return;
+            }
             if (password.length < 6) {
-                window.showAlert('Password must be at least 6 characters.', 'error');
+                showToast('Password must be at least 6 characters.', 'error');
                 return;
             }
 
@@ -1873,16 +2226,20 @@ document.addEventListener('DOMContentLoaded', () => {
                     body: JSON.stringify({ username, role, password })
                 });
 
-                const data = await response.json();
+                const data = await response.json().catch(() => ({}));
 
                 if (response.ok) {
-                    window.showAlert('User created successfully!', 'success');
-                    intRegForm.reset();
+                    const created = (data.user && data.user.username) || username.toLowerCase();
+                    showToast(`User "${created}" created. They can now sign in with this username and password.`, 'success');
+                    closeUserManagementModal();
+                    if (typeof fetchRoles === 'function') fetchRoles();
+                } else if (response.status === 401) {
+                    showToast('Your session has expired. Please sign in again.', 'error');
                 } else {
-                    window.showAlert(data.message || 'Registration failed', 'error');
+                    showToast(data.message || 'Could not create the user.', 'error');
                 }
             } catch (err) {
-                window.showAlert('Cannot connect to server.', 'error');
+                showToast('Cannot connect to the server.', 'error');
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = btnOriginalHtml;
@@ -1904,15 +2261,18 @@ function fetchRoles() {
                 window.roleUsersCache[r.name] = r.assignedUsers || [];
             });
 
+            // Roles and their users are managed by a Super Admin only
+            const isSuperAdmin = currentUserRole() === 'Super Admin';
             roles.forEach(role => {
                 const count = role.userCount !== undefined ? role.userCount : 0;
+                const permsText = role.permissions.includes('*') ? 'Full access' : `${role.permissions.length} pages allowed`;
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
-                    <td><strong>${role.name}</strong></td>
-                    <td><span style="color:var(--text-muted);">${role.permissions.length} pages allowed</span></td>
-                    <td><span style="background:#f1f5f9; padding:4px 10px; border-radius:12px; font-weight:600; color:#334155; font-size:0.85rem;"><i class="fa-solid fa-users" style="color:#64748b; margin-right:5px;"></i>${count} Users</span></td>
+                    <td><strong>${escapeHtml(role.name)}</strong></td>
+                    <td><span style="color:var(--text-muted);">${escapeHtml(permsText)}</span></td>
+                    <td><span style="background:#f1f5f9; padding:4px 10px; border-radius:12px; font-weight:600; color:#334155; font-size:0.85rem;"><i class="fa-solid fa-users" style="color:#64748b; margin-right:5px;"></i>${isSuperAdmin ? escapeHtml(count) + ' Users' : '-'}</span></td>
                     <td>
-                        <button class="icon-btn action-btn" onclick="editRole('${role.name}', this.closest('tr'))"><i class="fa-solid fa-pen-to-square"></i></button>
+                        ${isSuperAdmin ? `<button class="icon-btn action-btn" data-role="${escapeHtml(role.name)}" onclick="editRole(this.dataset.role, this.closest('tr'))"><i class="fa-solid fa-pen-to-square"></i></button>` : ''}
                     </td>
                 `;
                 tbody.appendChild(tr);
@@ -1927,12 +2287,17 @@ function fetchRoles() {
 window.editRole = function (roleName, trElement) {
     currentEditingRole = roleName;
     currentEditingRow = trElement;
-    document.getElementById('editing-role-name').innerHTML = '<i class="fa-solid fa-user-shield" style="color: var(--red-primary);"></i> Editing Permissions for: ' + roleName;
+    document.getElementById('editing-role-name').innerHTML = '<i class="fa-solid fa-user-shield" style="color: var(--red-primary);"></i> Editing Permissions for: ' + escapeHtml(roleName);
 
+    // Super Admin always has every permission; only its users can be managed here
+    const fixedRole = roleName === 'Super Admin';
     const currentPerms = rolesCache[roleName] || [];
     document.querySelectorAll('.perm-checkbox').forEach(cb => {
-        cb.checked = currentPerms.includes(cb.value);
+        cb.checked = fixedRole || currentPerms.includes('*') || currentPerms.includes(cb.value);
+        cb.disabled = fixedRole;
     });
+    const savePermsBtn = document.getElementById('save-role-perms-btn');
+    if (savePermsBtn) savePermsBtn.hidden = fixedRole;
 
     const assignedUsers = window.roleUsersCache ? (window.roleUsersCache[roleName] || []) : [];
     const usersContainer = document.getElementById('role-users-list');
@@ -1944,15 +2309,15 @@ window.editRole = function (roleName, trElement) {
             assignedUsers.forEach(u => {
                 const isBlocked = u.isBlocked || false;
                 const blockBtnHtml = isBlocked
-                    ? `<button onclick="toggleUserBlock('${u._id}', false)" style="background:#10b981; color:white; border:none; padding:5px 12px; border-radius:6px; font-size:0.8rem; font-weight:600; cursor:pointer; transition:0.2s;"><i class="fa-solid fa-unlock"></i> Unblock</button>`
-                    : `<button onclick="toggleUserBlock('${u._id}', true)" style="background:#ef4444; color:white; border:none; padding:5px 12px; border-radius:6px; font-size:0.8rem; font-weight:600; cursor:pointer; transition:0.2s;"><i class="fa-solid fa-ban"></i> Block</button>`;
+                    ? `<button onclick="toggleUserBlock('${escapeHtml(u._id)}', false)" style="background:#10b981; color:white; border:none; padding:5px 12px; border-radius:6px; font-size:0.8rem; font-weight:600; cursor:pointer; transition:0.2s;"><i class="fa-solid fa-unlock"></i> Unblock</button>`
+                    : `<button onclick="toggleUserBlock('${escapeHtml(u._id)}', true)" style="background:#ef4444; color:white; border:none; padding:5px 12px; border-radius:6px; font-size:0.8rem; font-weight:600; cursor:pointer; transition:0.2s;"><i class="fa-solid fa-ban"></i> Block</button>`;
 
                 usersContainer.innerHTML += `
                     <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px 15px; background: ${isBlocked ? '#fff1f2' : '#fff'}; border: 1px solid ${isBlocked ? '#fecdd3' : '#e2e8f0'}; border-radius: 6px; transition: 0.2s;">
                         <div style="display: flex; align-items: center; gap: 10px; opacity: ${isBlocked ? '0.6' : '1'};">
                             <i class="fa-solid fa-user-circle" style="color: #94a3b8; font-size: 1.5rem;"></i>
                             <div>
-                                <div style="font-weight: 600; color: #334155; font-size: 0.95rem;">${u.username || 'User'} ${isBlocked ? '<span style="color:#ef4444; font-size:0.75rem; margin-left:5px;"><i class="fa-solid fa-lock"></i> Blocked</span>' : ''}</div>
+                                <div style="font-weight: 600; color: #334155; font-size: 0.95rem;">${escapeHtml(u.username || 'User')} ${isBlocked ? '<span style="color:#ef4444; font-size:0.75rem; margin-left:5px;"><i class="fa-solid fa-lock"></i> Blocked</span>' : ''}</div>
                             </div>
                         </div>
                         <div>
@@ -2000,7 +2365,7 @@ window.toggleUserBlock = async function (userId, blockStatus) {
             cancelRoleEdit();
             fetchRoles();
         } else {
-            showToast('Failed to update user status.', 'error');
+            showToast(await apiErrorMessage(response, 'Failed to update user status.'), 'error');
         }
     } catch (e) {
         showToast('Error updating user status.', 'error');
@@ -2029,7 +2394,7 @@ window.saveRolePermissions = async function () {
                 currentEditingRow.cells[1].innerHTML = `<span style="color:var(--text-muted);">${newPerms.length} pages allowed</span>`;
             }
         } else {
-            showToast('Failed to save permissions.', 'error');
+            showToast(await apiErrorMessage(response, 'Failed to save permissions.'), 'error');
         }
     } catch (err) {
         console.error('Error updating role:', err);
@@ -2041,295 +2406,288 @@ window.saveRolePermissions = async function () {
 // KPI MODAL LOGIC
 // ==========================================
 
-window.openKpiModal = async function (category) {
-    window.currentKpiCategory = category;
-    document.getElementById('kpi-modal-title').innerText = category + ' Assets';
-    const tbody = document.getElementById('kpi-modal-body');
-    tbody.innerHTML = '<tr><td colspan="12" style="text-align:center; padding: 20px;">Loading data...</td></tr>';
+// Data is fetched once when a card opens; day/month/year/device/search then
+// filter that cached list instantly (and match the numbers on the cards).
+const KPI_FILTER_IDS = ['kpi-filter-day', 'kpi-filter-month', 'kpi-filter-year', 'kpi-filter-device', 'kpi-filter-search'];
+const KPI_ASSET_CATEGORIES = {
+    'Total': () => true,
+    'In Use': a => a.status === 'In Use',
+    'In Stock': a => a.status === 'In Stock',
+    'Repair': a => a.status === 'Under Repair',
+    'Software': a => kpiType(a) === 'software',
+    'Monitors': a => kpiType(a) === 'monitor' || kpiType(a) === 'monitors',
+    'Mouse': a => kpiType(a) === 'mouse',
+    'Keyboard': a => kpiType(a) === 'keyboard'
+};
+// Device type filter only makes sense where a card mixes several types
+const KPI_DEVICE_FILTER_CATEGORIES = ['Total', 'In Use', 'In Stock', 'Repair'];
+const KPI_TITLES = {
+    'Total': 'Total IT Assets', 'In Use': 'Assets In Use', 'In Stock': 'Assets In Stock', 'Repair': 'Under Repair',
+    'Software': 'Software Licenses', 'Monitors': 'Total Monitors', 'Mouse': 'Total Mouse', 'Keyboard': 'Total Keyboards',
+    'Allocations': 'Total Allocations', 'Returns': 'Total Returns'
+};
+const KPI_SEARCH_FIELDS = {
+    Allocations: ['employeeName', 'assetTagNumber', 'issueNotes', 'status'],
+    Returns: ['assetTagNumber', 'employeeName', 'deviceCondition', 'missingAccessories', 'notes'],
+    assets: REPORTS_SEARCH_FIELDS
+};
 
-    const modal = document.getElementById('kpi-modal');
-    modal.style.display = 'flex';
-    // Trigger reflow
-    void modal.offsetWidth;
-    modal.style.opacity = '1';
-    modal.querySelector('.modal-content').style.transform = 'scale(1)';
+const kpiState = { category: null, rows: [], requestId: 0 };
 
-    try {
-        const thead = document.getElementById('kpi-modal-thead');
-
-        // Hide device filter for Allocations and Returns
-        const deviceFilter = document.getElementById('kpi-filter-device');
-        if (deviceFilter) {
-            deviceFilter.style.display = (category === 'Allocations' || category === 'Returns') ? 'none' : 'inline-block';
-        }
-
-        // Get filter values
-        const filterDay = document.getElementById('kpi-filter-day')?.value || '';
-        const filterMonth = document.getElementById('kpi-filter-month')?.value || '';
-        const filterYear = document.getElementById('kpi-filter-year')?.value || '';
-        const filterSearch = document.getElementById('kpi-filter-search')?.value.toLowerCase() || '';
-
-        if (category === 'Allocations') {
-            document.getElementById('kpi-modal-title').innerText = 'Total Allocations';
-            thead.innerHTML = `
-                <tr>
-                    <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Employee</th>
-                    <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Asset Tag</th>
-                    <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Assign Date</th>
-                    <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Expected Return</th>
-                    <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Notes</th>
-                    <th style="padding: 12px; border-bottom: 2px solid #e2e8f0; text-align: center;">Actions</th>
-                </tr>
-            `;
-            const response = await fetch(API_URL + '/allocations' + window.getOwnershipQuery(true));
-            const allocations = await response.json();
-            window.currentAllocationsData = allocations;
-            let activeAllocs = allocations;
-
-            // Apply Date Filters
-            if (filterDay || filterMonth || filterYear) {
-                activeAllocs = activeAllocs.filter(a => {
-                    if (!a.assignDate) return false;
-                    const date = new Date(a.assignDate);
-                    let match = true;
-                    if (filterYear && date.getFullYear().toString() !== filterYear) match = false;
-                    if (filterMonth && date.getMonth().toString() !== filterMonth) match = false;
-                    if (filterDay && date.getDate().toString() !== filterDay) match = false;
-                    return match;
-                });
-            }
-
-            // Apply Search Filter
-            if (filterSearch) {
-                activeAllocs = activeAllocs.filter(a => {
-                    return (a.employeeName || '').toLowerCase().includes(filterSearch) ||
-                        (a.assetTagNumber || '').toLowerCase().includes(filterSearch) ||
-                        (a.issueNotes || '').toLowerCase().includes(filterSearch);
-                });
-            }
-
-            window.currentKpiFilteredData = activeAllocs;
-
-            if (activeAllocs.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding: 20px;">No active allocations found matching your filters.</td></tr>';
-                return;
-            }
-
-            tbody.innerHTML = '';
-            activeAllocs.forEach(alloc => {
-                const assignStr = alloc.assignDate ? new Date(alloc.assignDate).toLocaleDateString() : 'N/A';
-                const returnStr = alloc.expectedReturnDate ? new Date(alloc.expectedReturnDate).toLocaleDateString() : '-';
-                tbody.innerHTML += `
-                    <tr style="border-bottom: 1px solid #f1f5f9; transition: background-color 0.2s;">
-                        <td style="padding: 12px;"><i class="fa-solid fa-user-circle" style="color: #94a3b8; margin-right:5px;"></i> <strong>${alloc.employeeName}</strong></td>
-                        <td style="padding: 12px; color: var(--blue-primary); font-weight: 600;">${alloc.assetTagNumber}</td>
-                        <td style="padding: 12px;">${assignStr}</td>
-                        <td style="padding: 12px;">${returnStr}</td>
-                        <td style="padding: 12px; max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${alloc.issueNotes || ''}">${alloc.issueNotes || '-'}</td>
-                        <td style="padding: 12px; text-align: center; white-space: nowrap;">
-                            <button class="action-btn edit-btn" onclick="openEditAllocationModal('${alloc._id}'); document.getElementById('kpi-modal').style.display='none';" title="Edit">
-                                <i class="fa-solid fa-pen"></i>
-                            </button>
-                            <button class="action-btn delete-btn" onclick="deleteAllocation('${alloc._id}'); document.getElementById('kpi-modal').style.display='none';" title="Delete">
-                                <i class="fa-solid fa-trash"></i>
-                            </button>
-                        </td>
-                    </tr>
-                `;
-            });
-            return;
-        }
-
-        if (category === 'Returns') {
-            document.getElementById('kpi-modal-title').innerText = 'Total Returns';
-            thead.innerHTML = `
-                <tr>
-                    <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Asset Tag</th>
-                    <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Returned By</th>
-                    <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Date</th>
-                    <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Condition</th>
-                    <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Penalty</th>
-                    <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Notes</th>
-                    <th style="padding: 12px; border-bottom: 2px solid #e2e8f0; text-align: center;">Actions</th>
-                </tr>
-            `;
-            const response = await fetch(API_URL + '/returns' + window.getOwnershipQuery(true));
-            const returns = await response.json();
-            window.currentReturnsData = returns;
-
-            let filteredReturns = returns;
-
-            // Apply Date Filters
-            if (filterDay || filterMonth || filterYear) {
-                filteredReturns = filteredReturns.filter(a => {
-                    if (!a.returnDate) return false;
-                    const date = new Date(a.returnDate);
-                    let match = true;
-                    if (filterYear && date.getFullYear().toString() !== filterYear) match = false;
-                    if (filterMonth && date.getMonth().toString() !== filterMonth) match = false;
-                    if (filterDay && date.getDate().toString() !== filterDay) match = false;
-                    return match;
-                });
-            }
-
-            // Apply Search Filter
-            if (filterSearch) {
-                filteredReturns = filteredReturns.filter(a => {
-                    return (a.employeeName || '').toLowerCase().includes(filterSearch) ||
-                        (a.assetTagNumber || '').toLowerCase().includes(filterSearch) ||
-                        (a.notes || '').toLowerCase().includes(filterSearch) ||
-                        (a.deviceCondition || '').toLowerCase().includes(filterSearch);
-                });
-            }
-
-            window.currentKpiFilteredData = filteredReturns;
-
-            if (filteredReturns.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding: 20px;">No returns found matching your filters.</td></tr>';
-                return;
-            }
-
-            tbody.innerHTML = '';
-            filteredReturns.forEach(ret => {
-                let conditionColor = '#10B981';
-                if (['Damaged', 'Poor', 'Scrap'].includes(ret.deviceCondition)) conditionColor = '#EF4444';
-                else if (ret.deviceCondition === 'Fair') conditionColor = '#F59E0B';
-
-                const dateStr = ret.returnDate ? new Date(ret.returnDate).toLocaleDateString() : 'N/A';
-                tbody.innerHTML += `
-                    <tr style="border-bottom: 1px solid #f1f5f9; transition: background-color 0.2s;">
-                        <td style="padding: 12px;"><strong>${ret.assetTagNumber}</strong></td>
-                        <td style="padding: 12px;"><i class="fa-solid fa-user-circle" style="color: #94a3b8; margin-right:5px;"></i> ${ret.employeeName || 'N/A'}</td>
-                        <td style="padding: 12px;">${dateStr}</td>
-                        <td style="padding: 12px;"><span style="font-weight: 600; color: ${conditionColor};">${ret.deviceCondition}</span></td>
-                        <td style="padding: 12px; color: var(--red-primary); font-weight: 600;">${ret.penaltyAmount ? '$' + ret.penaltyAmount : '-'}</td>
-                        <td style="padding: 12px; max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${ret.notes || ''}">${ret.notes || '-'}</td>
-                        <td style="padding: 12px; text-align: center; white-space: nowrap;">
-                            <button class="action-btn edit-btn" onclick="openEditReturnModal('${ret._id}'); document.getElementById('kpi-modal').style.display='none';" title="Edit">
-                                <i class="fa-solid fa-pen"></i>
-                            </button>
-                            <button class="action-btn delete-btn" onclick="deleteReturn('${ret._id}'); document.getElementById('kpi-modal').style.display='none';" title="Delete">
-                                <i class="fa-solid fa-trash"></i>
-                            </button>
-                        </td>
-                    </tr>
-                `;
-            });
-            return;
-        }
-
-        // Default Asset View for all other categories
-        const isSoftware = category.toLowerCase() === 'software';
-
-        thead.innerHTML = `
-            <tr>
-                <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">SR No</th>
-                <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Asset Tag</th>
-                <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">${isSoftware ? 'Software License Key' : 'Serial/Key'}</th>
-                ${!isSoftware ? '<th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Device Type</th>' : ''}
-                <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">${isSoftware ? 'Software Name' : 'Make & Model'}</th>
-                <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Assign Date</th>
-                <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Valid Date</th>
-                <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Remark</th>
-                <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Status</th>
-                <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Assign NAME</th>
-                <th style="padding: 12px; border-bottom: 2px solid #e2e8f0;">Emp ID</th>
-                <th style="padding: 12px; border-bottom: 2px solid #e2e8f0; text-align: center;">Actions</th>
-            </tr>
-        `;
-
-        const response = await fetch(API_URL + '/assets' + window.getOwnershipQuery());
-        const assets = await response.json();
-
-        let filtered = assets;
-        if (category === 'In Use') filtered = assets.filter(a => a.status === 'In Use');
-        if (category === 'In Stock') filtered = assets.filter(a => a.status === 'In Stock');
-        if (category === 'Repair') filtered = assets.filter(a => a.status === 'Under Repair' || a.status === 'Damage' || a.status === 'Damaged');
-        if (category === 'Software') filtered = assets.filter(a => (a.deviceType || '').toLowerCase().includes('software') || (a.category || '').toLowerCase().includes('software'));
-        if (category === 'Monitors') filtered = assets.filter(a => (a.deviceType || '').toLowerCase() === 'monitor');
-        if (category === 'Mouse') filtered = assets.filter(a => (a.deviceType || '').toLowerCase() === 'mouse');
-        if (category === 'Keyboard') filtered = assets.filter(a => (a.deviceType || '').toLowerCase() === 'keyboard');
-
-        if (filterSearch) {
-            filtered = filtered.filter(a => {
-                return (a.assetTagNumber || '').toLowerCase().includes(filterSearch) ||
-                    (a.serialNumber || '').toLowerCase().includes(filterSearch) ||
-                    (a.make || '').toLowerCase().includes(filterSearch) ||
-                    (a.model || '').toLowerCase().includes(filterSearch) ||
-                    (a.assignedToName || '').toLowerCase().includes(filterSearch) ||
-                    (a.employeeId || '').toLowerCase().includes(filterSearch);
-            });
-        }
-
-        if (filterDay || filterMonth || filterYear) {
-            filtered = filtered.filter(a => {
-                if (!a.createdAt) return false;
-                const date = new Date(a.createdAt);
-                let match = true;
-                if (filterYear && date.getFullYear().toString() !== filterYear) match = false;
-                if (filterMonth && date.getMonth().toString() !== filterMonth) match = false;
-                if (filterDay && date.getDate().toString() !== filterDay) match = false;
-                return match;
-            });
-        }
-
-        window.currentKpiFilteredData = filtered;
-
-        tbody.innerHTML = '';
-        if (filtered.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="12" style="text-align:center; padding: 30px; color: #94a3b8; font-style: italic;">No assets found for this category.</td></tr>';
-            return;
-        }
-
-        filtered.forEach(asset => {
-            const tr = document.createElement('tr');
-            tr.style.borderBottom = '1px solid #f1f5f9';
-            let statusClass = 'in-stock';
-            if (asset.status === 'In Use') statusClass = 'in-use';
-            if (asset.status === 'Under Repair') statusClass = 'under-repair';
-
-            tr.innerHTML = `
-                <td style="padding: 12px 16px;">${asset.srNo || '-'}</td>
-                <td style="padding: 12px 16px;"><strong>${asset.assetTagNumber || '-'}</strong></td>
-                <td style="padding: 12px 16px;">${asset.serialNumber || '-'}</td>
-                ${!isSoftware ? `<td style="padding: 12px 16px;">${asset.deviceType || '-'}</td>` : ''}
-                <td style="padding: 12px 16px;">${asset.make || ''} ${asset.model || ''}</td>
-                <td style="padding: 12px 16px;">${asset.purchaseDate ? new Date(asset.purchaseDate).toLocaleDateString() : '-'}</td>
-                <td style="padding: 12px 16px;">${asset.warrantyEndDate ? new Date(asset.warrantyEndDate).toLocaleDateString() : '-'}</td>
-                <td style="padding: 12px 16px;">${asset.remark || '-'}</td>
-                <td style="padding: 12px 16px;"><span class="status-badge ${statusClass}">${asset.status || '-'}</span></td>
-                <td style="padding: 12px 16px; color: var(--text-main); font-weight: 500;"><i class="fa-solid fa-user-circle" style="color: #cbd5e1; margin-right: 5px;"></i>${asset.assignedToName || 'Unassigned'}</td>
-                <td style="padding: 12px 16px;">${asset.employeeId || '-'}</td>
-                <td style="padding: 12px 16px;">
-                    ${(window.userPermissions && (window.userPermissions.includes('*') || window.userPermissions.includes('edit_asset'))) ? `<button onclick="openEditModal('${asset._id}')" style="background:none;border:none;color:var(--primary);cursor:pointer;margin-right:12px;font-size:1.1rem;transition:0.2s;" onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'"><i class="fa-solid fa-pen"></i></button>` : ''}
-                    ${(window.userPermissions && (window.userPermissions.includes('*') || window.userPermissions.includes('delete_asset'))) ? `<button onclick="deleteAsset('${asset._id}')" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:1.1rem;transition:0.2s;" onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'"><i class="fa-solid fa-trash"></i></button>` : ''}
-                </td>
-            `;
-            tbody.appendChild(tr);
-        });
-
-    } catch (error) {
-        console.error('Error fetching KPI data:', error);
-        showToast('Database loading failed. Is the backend running?', 'error');
-        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding: 30px; color: #ef4444;">Failed to load data.</td></tr>';
-    }
+function kpiType(asset) {
+    return (asset.deviceType || '').trim().toLowerCase();
 }
 
-window.applyKpiFilters = function () {
-    if (window.currentKpiCategory) {
-        openKpiModal(window.currentKpiCategory);
+function kpiRowDate(row) {
+    if (kpiState.category === 'Allocations') return reportsValidDate(row.assignDate);
+    if (kpiState.category === 'Returns') return reportsValidDate(row.returnDate) || reportsValidDate(row.createdAt);
+    return reportsDate(row);
+}
+
+function kpiFmtDate(value) {
+    const d = reportsValidDate(value);
+    return d ? d.toLocaleDateString() : '-';
+}
+
+function kpiPermission(name) {
+    const perms = window.userPermissions || [];
+    return perms.includes('*') || perms.includes(name);
+}
+
+window.openKpiModal = async function (category) {
+    const reopening = kpiState.category === category;
+    kpiState.category = category;
+    window.currentKpiCategory = category;
+    bindKpiControls();
+
+    const modal = document.getElementById('kpi-modal');
+    const tbody = document.getElementById('kpi-modal-body');
+    const countEl = document.getElementById('kpi-count');
+    const isAssets = !!KPI_ASSET_CATEGORIES[category];
+    document.getElementById('kpi-modal-title').innerText = KPI_TITLES[category] || (category + ' Assets');
+
+    const deviceFilter = document.getElementById('kpi-filter-device');
+    if (deviceFilter) {
+        const showDevice = KPI_DEVICE_FILTER_CATEGORIES.includes(category);
+        deviceFilter.hidden = !showDevice;
+        if (!showDevice) deviceFilter.value = '';
+    }
+
+    renderKpiHead();
+    if (!reopening || !kpiState.rows.length) {
+        kpiState.rows = [];
+        tbody.innerHTML = '<tr><td colspan="13" class="inventory-empty"><i class="fa-solid fa-spinner fa-spin"></i> Loading data…</td></tr>';
+    }
+    if (countEl) countEl.textContent = 'Loading…';
+
+    if (modal.style.display !== 'flex') {
+        modal.style.display = 'flex';
+        void modal.offsetWidth; // reflow so the open transition runs
+        modal.style.opacity = '1';
+        modal.querySelector('.modal-content').style.transform = 'scale(1)';
+    }
+
+    const requestId = ++kpiState.requestId;
+    try {
+        const endpoint = category === 'Allocations' ? '/allocations' : category === 'Returns' ? '/returns' : '/assets';
+        const response = await fetch(API_URL + endpoint + window.getOwnershipQuery(true));
+        if (!response.ok) throw new Error('Failed to fetch data (' + response.status + ')');
+        const data = await response.json();
+        if (requestId !== kpiState.requestId) return; // a newer card/refresh superseded this load
+
+        const list = Array.isArray(data) ? data : [];
+        if (category === 'Allocations') window.currentAllocationsData = list;
+        if (category === 'Returns') window.currentReturnsData = list;
+        kpiState.rows = isAssets ? list.filter(KPI_ASSET_CATEGORIES[category]) : list;
+
+        if (deviceFilter && !deviceFilter.hidden) {
+            const types = new Map();
+            kpiState.rows.forEach(a => {
+                const t = (a.deviceType || '').trim();
+                if (t && !types.has(t.toLowerCase())) types.set(t.toLowerCase(), t.charAt(0).toUpperCase() + t.slice(1).toLowerCase());
+            });
+            setSelectOptions(deviceFilter, 'All Device Types',
+                [...types.entries()].sort((a, b) => a[1].localeCompare(b[1])).map(([value, label]) => ({ value, label })));
+        }
+        renderKpiRows();
+    } catch (error) {
+        if (requestId !== kpiState.requestId) return;
+        console.error('Error fetching KPI data:', error);
+        showToast('Database loading failed. Is the backend running?', 'error');
+        if (countEl) countEl.textContent = '';
+        tbody.innerHTML = '<tr><td colspan="13" class="inventory-empty" style="color:#dc2626;">Failed to load data: ' + reportsEsc(error.message) + '</td></tr>';
     }
 };
 
-window.clearKpiFilters = function () {
-    if (document.getElementById('kpi-filter-day')) document.getElementById('kpi-filter-day').value = '';
-    if (document.getElementById('kpi-filter-month')) document.getElementById('kpi-filter-month').value = '';
-    if (document.getElementById('kpi-filter-year')) document.getElementById('kpi-filter-year').value = '';
-    if (document.getElementById('kpi-filter-device')) document.getElementById('kpi-filter-device').value = '';
-    if (document.getElementById('kpi-filter-search')) document.getElementById('kpi-filter-search').value = '';
-    if (window.currentKpiCategory) {
-        openKpiModal(window.currentKpiCategory);
+function renderKpiHead() {
+    const thead = document.getElementById('kpi-modal-thead');
+    const category = kpiState.category;
+    let cols;
+    if (category === 'Allocations') {
+        cols = ['Employee', 'Asset Tag', 'Assign Date', 'Expected Return', 'Status', 'Notes', 'Actions'];
+    } else if (category === 'Returns') {
+        cols = ['Asset Tag', 'Returned By', 'Date', 'Condition', 'Penalty', 'Notes', 'Actions'];
+    } else {
+        const isSoftware = category === 'Software';
+        cols = ['SR No', 'Asset Tag', isSoftware ? 'Software License Key' : 'Serial/Key']
+            .concat(isSoftware ? [] : ['Device Type'])
+            .concat([isSoftware ? 'Software Name' : 'Make & Model', 'Assign Date', 'Valid Date', 'Remark', 'Status', 'Assign NAME', 'Emp ID', 'Actions']);
     }
+    thead.innerHTML = '<tr>' + cols.map(c => '<th' + (c === 'Actions' ? ' style="text-align:center;"' : '') + '>' + c + '</th>').join('') + '</tr>';
+    return cols.length;
+}
+
+function renderKpiRows() {
+    const category = kpiState.category;
+    if (!category) return;
+    const tbody = document.getElementById('kpi-modal-body');
+    const countEl = document.getElementById('kpi-count');
+    const colCount = document.querySelectorAll('#kpi-modal-thead th').length || 13;
+    const val = id => document.getElementById(id)?.value || '';
+    const day = val('kpi-filter-day'), month = val('kpi-filter-month'), year = val('kpi-filter-year');
+    const device = document.getElementById('kpi-filter-device')?.hidden ? '' : val('kpi-filter-device');
+    const isAssets = !!KPI_ASSET_CATEGORIES[category];
+    const searchFields = isAssets ? KPI_SEARCH_FIELDS.assets : KPI_SEARCH_FIELDS[category];
+    const terms = parseReportsQuery(val('kpi-filter-search')).map(t =>
+        t.fields === REPORTS_SEARCH_FIELDS ? Object.assign({}, t, { fields: searchFields }) : t);
+
+    const all = kpiState.rows;
+    const filtered = all.filter(row => {
+        if (device && kpiType(row) !== device) return false;
+        if (day || month || year) {
+            const d = kpiRowDate(row);
+            if (!d) return false;
+            if (year && String(d.getFullYear()) !== year) return false;
+            if (month && String(d.getMonth()) !== month) return false;
+            if (day && String(d.getDate()) !== day) return false;
+        }
+        return !terms.length || reportsMatches(row, terms);
+    });
+    window.currentKpiFilteredData = filtered;
+
+    if (countEl) {
+        countEl.innerHTML = filtered.length === all.length
+            ? '<strong>' + all.length + '</strong> records'
+            : '<strong>' + filtered.length + '</strong> of ' + all.length + ' records';
+    }
+
+    if (!filtered.length) {
+        tbody.innerHTML = '<tr><td colspan="' + colCount + '" class="inventory-empty">' +
+            (all.length
+                ? 'No records match your filters.<br><button type="button" class="secondary-btn btn-sm" onclick="clearKpiFilters()"><i class="fa-solid fa-rotate-left"></i> Clear filters</button>'
+                : 'No records found for this category.') +
+            '</td></tr>';
+        return;
+    }
+
+    const hl = v => reportsHighlight(v, terms);
+    const cell = (v, fallback) => (v || v === 0 ? hl(v) : fallback);
+    const closeThen = 'document.getElementById(\'kpi-modal\').style.display=\'none\';';
+
+    let html;
+    if (category === 'Allocations') {
+        html = filtered.map(a => {
+            const id = reportsEsc(a._id);
+            return '<tr>' +
+                '<td class="cell-user"><i class="fa-solid fa-user-circle"></i>' + cell(a.employeeName, '-') + '</td>' +
+                '<td><strong>' + cell(a.assetTagNumber, '-') + '</strong></td>' +
+                '<td>' + kpiFmtDate(a.assignDate) + '</td>' +
+                '<td>' + kpiFmtDate(a.expectedReturnDate) + '</td>' +
+                '<td><span class="status-badge ' + (a.status === 'Returned' ? 'returned' : 'in-use') + '">' + cell(a.status || 'Active', '-') + '</span></td>' +
+                '<td title="' + reportsEsc(a.issueNotes || '') + '">' + cell(a.issueNotes, '-') + '</td>' +
+                '<td style="text-align:center; white-space:nowrap;">' +
+                '<button class="icon-action" title="Edit" onclick="openEditAllocationModal(\'' + id + '\'); ' + closeThen + '"><i class="fa-solid fa-pen"></i></button>' +
+                '<button class="icon-action danger" title="Delete" onclick="deleteAllocation(\'' + id + '\')"><i class="fa-solid fa-trash"></i></button>' +
+                '</td></tr>';
+        }).join('');
+    } else if (category === 'Returns') {
+        html = filtered.map(r => {
+            const id = reportsEsc(r._id);
+            let color = '#10B981';
+            if (['Damaged', 'Poor', 'Scrap'].includes(r.deviceCondition)) color = '#EF4444';
+            else if (r.deviceCondition === 'Fair') color = '#F59E0B';
+            return '<tr>' +
+                '<td><strong>' + cell(r.assetTagNumber, '-') + '</strong></td>' +
+                '<td class="cell-user"><i class="fa-solid fa-user-circle"></i>' + cell(r.employeeName, 'N/A') + '</td>' +
+                '<td>' + kpiFmtDate(r.returnDate) + '</td>' +
+                '<td><span style="font-weight:600; color:' + color + ';">' + cell(r.deviceCondition, '-') + '</span></td>' +
+                '<td style="color:#dc2626; font-weight:600;">' + (r.penaltyAmount ? '₹' + reportsEsc(r.penaltyAmount) : '-') + '</td>' +
+                '<td title="' + reportsEsc(r.notes || '') + '">' + cell(r.notes, '-') + '</td>' +
+                '<td style="text-align:center; white-space:nowrap;">' +
+                '<button class="icon-action" title="Edit" onclick="openEditReturnModal(\'' + id + '\'); ' + closeThen + '"><i class="fa-solid fa-pen"></i></button>' +
+                '<button class="icon-action danger" title="Delete" onclick="deleteReturn(\'' + id + '\')"><i class="fa-solid fa-trash"></i></button>' +
+                '</td></tr>';
+        }).join('');
+    } else {
+        const isSoftware = category === 'Software';
+        const canEdit = kpiPermission('edit_asset');
+        const canDelete = kpiPermission('delete_asset');
+        html = filtered.map(a => {
+            const id = reportsEsc(a._id);
+            const makeModel = [a.make, a.model && a.model !== a.make ? a.model : ''].filter(Boolean).join(' ');
+            return '<tr>' +
+                '<td>' + cell(a.srNo, '-') + '</td>' +
+                '<td><strong>' + cell(a.assetTagNumber, '-') + '</strong></td>' +
+                '<td>' + cell(a.serialNumber, '-') + '</td>' +
+                (isSoftware ? '' : '<td>' + cell(a.deviceType, '-') + '</td>') +
+                '<td>' + cell(makeModel, '-') + '</td>' +
+                '<td>' + kpiFmtDate(a.purchaseDate) + '</td>' +
+                '<td>' + kpiFmtDate(a.warrantyEndDate) + '</td>' +
+                '<td>' + cell(a.remark, '-') + '</td>' +
+                '<td><span class="status-badge ' + reportsStatusClass(a.status) + '">' + cell(a.status, '-') + '</span></td>' +
+                '<td class="cell-user"><i class="fa-solid fa-user-circle"></i>' + cell(a.assignedToName, 'Unassigned') + '</td>' +
+                '<td>' + cell(a.employeeId, '-') + '</td>' +
+                '<td style="text-align:center; white-space:nowrap;">' +
+                (canEdit ? '<button class="icon-action" title="Edit" onclick="openEditModal(\'' + id + '\')"><i class="fa-solid fa-pen"></i></button>' : '') +
+                (canDelete ? '<button class="icon-action danger" title="Delete" onclick="deleteAsset(\'' + id + '\')"><i class="fa-solid fa-trash"></i></button>' : '') +
+                '</td></tr>';
+        }).join('');
+    }
+    tbody.innerHTML = html;
+}
+
+let kpiControlsBound = false;
+function bindKpiControls() {
+    if (kpiControlsBound) return;
+    const search = document.getElementById('kpi-filter-search');
+    if (!search) return;
+    kpiControlsBound = true;
+
+    let timer = null;
+    search.addEventListener('input', () => {
+        clearTimeout(timer);
+        timer = setTimeout(renderKpiRows, 120);
+    });
+    search.addEventListener('keydown', e => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            clearTimeout(timer);
+            renderKpiRows();
+        } else if (e.key === 'Escape' && search.value) {
+            e.preventDefault();
+            e.stopPropagation();
+            search.value = '';
+            renderKpiRows();
+        }
+    });
+    KPI_FILTER_IDS.filter(id => id !== 'kpi-filter-search').forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('change', renderKpiRows);
+    });
+}
+
+function resetKpiFilterInputs() {
+    KPI_FILTER_IDS.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+}
+
+window.applyKpiFilters = renderKpiRows;
+
+window.clearKpiFilters = function () {
+    resetKpiFilterInputs();
+    renderKpiRows();
 };
 
 window.closeKpiModal = function () {
@@ -2339,12 +2697,11 @@ window.closeKpiModal = function () {
     setTimeout(() => {
         modal.style.display = 'none';
     }, 300);
-    // Clear filters when closing
-    if (document.getElementById('kpi-filter-day')) document.getElementById('kpi-filter-day').value = '';
-    if (document.getElementById('kpi-filter-month')) document.getElementById('kpi-filter-month').value = '';
-    if (document.getElementById('kpi-filter-device')) document.getElementById('kpi-filter-device').value = '';
-    if (document.getElementById('kpi-filter-search')) document.getElementById('kpi-filter-search').value = '';
-}
+    kpiState.requestId++; // ignore any load still in flight
+    kpiState.category = null;
+    kpiState.rows = [];
+    resetKpiFilterInputs();
+};
 
 // ==========================================
 // PROFILE MODAL LOGIC
@@ -2381,13 +2738,13 @@ function closeProfileModal() {
 
 async function submitProfileForm(e) {
     e.preventDefault();
-    const btn = document.getElementById('save-prof-btn');
+    const btn = e.target.querySelector('button[type="submit"]');
     const originalText = btn.innerHTML;
     btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving...';
     btn.disabled = true;
 
+    // Username is the login name and can't be changed here
     const updateData = {
-        username: document.getElementById('prof-username').value.trim(),
         phone: document.getElementById('prof-phone').value.trim(),
         employeeId: document.getElementById('prof-empId').value.trim()
     };
@@ -2407,18 +2764,13 @@ async function submitProfileForm(e) {
             const data = await response.json();
             showToast('Profile updated successfully!', 'success');
 
-            // Update UI headers
-            const nameEl = document.getElementById('user-name');
-            const avatarEl = document.getElementById('user-avatar');
-            if (nameEl) nameEl.textContent = data.username;
-            if (avatarEl) avatarEl.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(data.username)}&background=A855F7&color=fff`;
-
-            // Update localStorage user obj
+            // Keep the saved session and the header chip in step
             const userStr = localStorage.getItem('user');
             if (userStr) {
                 const lsUser = JSON.parse(userStr);
-                lsUser.username = data.username;
+                lsUser.employeeId = data.employeeId;
                 localStorage.setItem('user', JSON.stringify(lsUser));
+                renderSignedInUser(lsUser);
             }
 
             closeProfileModal();
@@ -2469,7 +2821,7 @@ window.deleteAsset = async function (id) {
                 openKpiModal(window.currentKpiCategory);
             }
         } else {
-            showToast('Failed to delete asset.', 'error');
+            showToast(await apiErrorMessage(response, 'Failed to delete asset.'), 'error');
         }
     } catch (error) {
         console.error('Delete error:', error);
@@ -2480,14 +2832,12 @@ window.deleteAsset = async function (id) {
 window.openEditModal = async function (id) {
     try {
         // Fetch asset data to populate form
-        const response = await fetch(API_URL + '/assets' + window.getOwnershipQuery());
-        const assets = await response.json();
-        const asset = assets.find(a => a._id === id);
-
-        if (!asset) {
-            showToast('Asset not found.', 'error');
+        const response = await fetch(API_URL + '/assets/' + encodeURIComponent(id), { cache: 'no-store' });
+        if (!response.ok) {
+            showToast(await apiErrorMessage(response, 'Asset not found.'), 'error');
             return;
         }
+        const asset = await response.json();
 
         document.getElementById('edit-asset-id').value = asset._id;
         document.getElementById('edit-assetTagNumber').value = asset.assetTagNumber || '';
@@ -2517,15 +2867,6 @@ window.openEditModal = async function (id) {
         console.error('Error fetching asset:', error);
         showToast('Failed to load asset details.', 'error');
     }
-}
-
-window.closeEditModal = function () {
-    const modal = document.getElementById('edit-asset-modal');
-    modal.style.opacity = '0';
-    modal.querySelector('.modal-content').style.transform = 'scale(0.95)';
-    setTimeout(() => {
-        modal.style.display = 'none';
-    }, 300);
 }
 
 window.submitEditForm = async function (e) {
@@ -2586,7 +2927,7 @@ window.importExcelFile = async function (input) {
         <div style="background:rgba(255,255,255,0.95);padding:40px;border-radius:20px;text-align:center;box-shadow:0 25px 50px rgba(0,0,0,0.3);max-width:400px;width:90%;">
             <div style="width:60px;height:60px;margin:0 auto 20px;border:4px solid #e2e8f0;border-top-color:#e74c3c;border-radius:50%;animation:spin 1s linear infinite;"></div>
             <h3 style="margin:0 0 8px;color:#0f172a;font-size:1.2rem;">Importing Excel File...</h3>
-            <p style="margin:0;color:#64748b;font-size:0.9rem;">${file.name}</p>
+            <p style="margin:0;color:#64748b;font-size:0.9rem;">${escapeHtml(file.name)}</p>
             <p style="margin:8px 0 0;color:#94a3b8;font-size:0.8rem;">This may take a moment for large files</p>
         </div>
     `;
@@ -2618,12 +2959,12 @@ window.importExcelFile = async function (input) {
                 const detail = info.status === 'skipped' ? info.reason : `${info.rows} rows parsed`;
                 let extra = '';
                 if (info.skippedReasons && info.skippedReasons.length > 0) {
-                    extra = `<div class="res-scroll-item-error">Skipped rows due to: ${info.skippedReasons.join(', ')}</div>`;
+                    extra = `<div class="res-scroll-item-error">Skipped rows due to: ${escapeHtml(info.skippedReasons.join(', '))}</div>`;
                 }
                 sheetsHtml += `<div class="res-scroll-item">
                     <div class="res-scroll-item-header">
-                        <span>${icon} ${name}</span>
-                        <span class="res-scroll-item-detail">${detail}</span>
+                        <span>${icon} ${escapeHtml(name)}</span>
+                        <span class="res-scroll-item-detail">${escapeHtml(detail)}</span>
                     </div>
                     ${extra}
                 </div>`;
@@ -2642,7 +2983,7 @@ window.importExcelFile = async function (input) {
                         <i class="fa-solid ${response.ok ? 'fa-check' : 'fa-xmark'}"></i>
                     </div>
                     <h2 class="res-title">${response.ok ? 'Import Successful!' : 'Import Failed'}</h2>
-                    <p class="res-msg">${result.message}</p>
+                    <p class="res-msg">${escapeHtml(result.message || '')}</p>
                 </div>
                 ${response.ok ? `
                 <div class="res-grid">
@@ -2696,300 +3037,54 @@ window.closeExportModal = function () {
     }, 300);
 };
 
+// One CSV cell: always quoted, and a leading = + - @ is neutralised so a spreadsheet
+// never runs imported text as a formula
+function csvCell(value) {
+    let text = value == null ? '' : (typeof value === 'object' && !(value instanceof Date) ? JSON.stringify(value) : String(value));
+    if (/^[=+\-@\t\r]/.test(text)) text = "'" + text;
+    return '"' + text.replace(/"/g, '""') + '"';
+}
+
+function downloadCsv(filename, headers, rows) {
+    const csv = [headers, ...rows].map(row => row.map(csvCell).join(',')).join('\r\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }); // BOM so Excel reads UTF-8
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.hidden = true;
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 window.exportData = async function (type) {
+    if (!['assets', 'allocations', 'returns'].includes(type)) return;
     showToast('Preparing export for ' + type + '...', 'info');
     try {
-        let endpoint = API_URL + '/' + type;
-        const response = await fetch(endpoint);
-
+        const response = await fetch(API_URL + '/' + type);
         if (!response.ok) {
-            throw new Error('Failed to fetch data');
+            throw new Error(await apiErrorMessage(response, 'Export failed. Data might not be available.'));
         }
 
         const data = await response.json();
-
-        if (!data || data.length === 0) {
+        if (!Array.isArray(data) || data.length === 0) {
             showToast('No data available to export.', 'error');
             return;
         }
 
-        // Convert json to csv
-        const headers = Object.keys(data[0]).filter(k => k !== '__v' && k !== '_id');
-        const csvRows = [];
-        csvRows.push(headers.join(','));
-
-        for (const row of data) {
-            const values = headers.map(header => {
-                const escaped = ('' + (row[header] || '')).replace(/"/g, '\\"');
-                return `"${escaped}"`;
-            });
-            csvRows.push(values.join(','));
-        }
-
-        const csvString = csvRows.join('\n');
-        const blob = new Blob([csvString], { type: 'text/csv' });
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.setAttribute('hidden', '');
-        a.setAttribute('href', url);
-        a.setAttribute('download', type + '_export.csv');
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
+        // Every field that appears in any record, not only the first one
+        const headers = [...new Set(data.flatMap(row => Object.keys(row)))].filter(k => k !== '__v' && k !== '_id');
+        downloadCsv(type + '_export_' + new Date().toISOString().split('T')[0] + '.csv', headers, data.map(row => headers.map(h => row[h])));
 
         showToast('Export successful!', 'success');
         closeExportModal();
-
     } catch (err) {
         console.error(err);
-        showToast('Export failed. Data might not be available.', 'error');
+        showToast(err.message || 'Export failed. Data might not be available.', 'error');
     }
 };
-// --- AUTH.JS MERGED CONTENT ---
-var API_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:5000/api' : '/api';
-
-document.addEventListener('DOMContentLoaded', () => {
-    if (window.location.pathname.includes('auth.html') || window.location.pathname.endsWith('/frontend/') || window.location.pathname.endsWith('/frontend')) {
-        const token = localStorage.getItem('token');
-        if (token) {
-            window.location.href = 'index.html';
-        }
-    }
-});
-
-window.switchTab = function (tab) {
-    const loginForm = document.getElementById('login-form');
-    const registerForm = document.getElementById('register-form');
-    const btnLogin = document.getElementById('btn-login');
-    const btnRegister = document.getElementById('btn-register');
-    const subtitle = document.getElementById('auth-subtitle');
-    const alertMsg = document.getElementById('alert-message');
-
-    if (!loginForm) return;
-    alertMsg.style.display = 'none';
-
-    if (tab === 'login') {
-        loginForm.style.display = 'block';
-        registerForm.style.display = 'none';
-        btnLogin.classList.add('active');
-        btnRegister.classList.remove('active');
-        subtitle.textContent = 'Sign in to continue';
-    } else {
-        loginForm.style.display = 'none';
-        registerForm.style.display = 'block';
-        btnLogin.classList.remove('active');
-        btnRegister.classList.add('active');
-        subtitle.textContent = 'Create a new account';
-    }
-}
-
-window.togglePasswordVisibility = function (inputId, iconElement) {
-    const input = document.getElementById(inputId);
-    if (!input) return;
-    if (input.type === 'password') {
-        input.type = 'text';
-        iconElement.classList.remove('fa-eye-slash');
-        iconElement.classList.add('fa-eye');
-    } else {
-        input.type = 'password';
-        iconElement.classList.remove('fa-eye');
-        iconElement.classList.add('fa-eye-slash');
-    }
-}
-
-window.showAlert = function (message, type = 'error') {
-    if (type === 'error' || type === 'warning') {
-        const audio = new Audio('freesound_community-beep-warning-6387.mp3');
-        audio.play().catch(e => console.log('Audio play failed:', e));
-    }
-    const alertBox = document.getElementById('alert-message');
-    if (alertBox) {
-        alertBox.textContent = message;
-        alertBox.className = "alert-message " + type;
-        alertBox.style.display = 'block';
-    }
-}
-
-window.validateEmailRealtime = function (email) {
-    const icon = document.getElementById('email-valid-icon');
-    if (!icon) return;
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (emailRegex.test(email)) {
-        icon.style.display = 'block';
-    } else {
-        icon.style.display = 'none';
-    }
-}
-
-window.validatePasswordRealtime = function (password) {
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-    const loginForm = document.getElementById('login-form');
-    if (loginForm) {
-        loginForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const email = document.getElementById('login-email').value;
-            const password = document.getElementById('login-password').value;
-            const btn = document.getElementById('login-submit');
-
-            btn.disabled = true;
-            btn.innerHTML = '<span>Logging in...</span> <i class="fa-solid fa-spinner fa-spin"></i>';
-
-            try {
-                const response = await fetch(API_URL + '/auth/login', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email, password })
-                });
-
-                const data = await response.json();
-
-                if (response.ok) {
-                    localStorage.setItem('token', data.token);
-                    localStorage.setItem('user', JSON.stringify(data.user));
-                    window.location.href = 'index.html';
-                } else {
-                    window.showAlert(data.message || 'Login failed');
-                }
-            } catch (err) {
-                window.showAlert('Cannot connect to server.');
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = '<span>Login</span> <i class="fa-solid fa-arrow-right"></i>';
-            }
-        });
-    }
-
-    const registerForm = document.getElementById('register-form');
-    if (registerForm) {
-        registerForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const name = document.getElementById('register-name').value;
-            const email = document.getElementById('register-email').value;
-            const role = document.getElementById('register-role').value;
-            const password = document.getElementById('register-password').value;
-            const btn = document.getElementById('register-submit');
-
-            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-            if (!emailRegex.test(email)) {
-                window.showAlert('Please enter a valid email address.');
-                return;
-            }
-            if (password.length < 6) {
-                window.showAlert('Password must be at least 6 characters.');
-                return;
-            }
-            if (!role) {
-                window.showAlert('Please select a role.');
-                return;
-            }
-
-            btn.disabled = true;
-            btn.innerHTML = '<span>Registering...</span> <i class="fa-solid fa-spinner fa-spin"></i>';
-
-            try {
-                const response = await fetch(API_URL + '/auth/register', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name, email, role, password })
-                });
-
-                const data = await response.json();
-
-                if (response.ok) {
-                    window.showAlert('Registration successful! Logging in...', 'success');
-                    localStorage.setItem('token', data.token);
-                    localStorage.setItem('user', JSON.stringify(data.user));
-                    setTimeout(() => {
-                        window.location.href = 'index.html';
-                    }, 1000);
-                } else {
-                    window.showAlert(data.message || 'Registration failed');
-                }
-            } catch (err) {
-                window.showAlert('Cannot connect to server.');
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = '<span>Register Account</span> <i class="fa-solid fa-arrow-right"></i>';
-            }
-        });
-    }
-});
-
-// --- Interactive Ambient Background Logic ---
-document.addEventListener("DOMContentLoaded", () => {
-    const ambientBg = document.getElementById("ambient-bg");
-    if (ambientBg) {
-        document.addEventListener("mousemove", (e) => {
-            const x = (e.clientX / window.innerWidth) * 100;
-            const y = (e.clientY / window.innerHeight) * 100;
-            ambientBg.style.backgroundImage = `radial-gradient(circle at ${x}% ${y}%, rgba(225, 29, 72, 0.20) 0%, rgba(255, 255, 255, 0) 60%)`;
-        });
-    }
-});
-
-
-// --- Interactive Ambient Background Logic ---
-document.addEventListener("DOMContentLoaded", () => {
-    const ambientBg = document.getElementById("ambient-bg");
-    if (ambientBg) {
-        document.addEventListener("mousemove", (e) => {
-            const x = (e.clientX / window.innerWidth) * 100;
-            const y = (e.clientY / window.innerHeight) * 100;
-            ambientBg.style.backgroundImage = `radial-gradient(circle at ${x}% ${y}%, rgba(225, 29, 72, 0.20) 0%, rgba(255, 255, 255, 0) 60%)`;
-        });
-    }
-});
-
-// ====== QUICK ALLOCATIONS (MOUSE & KEYBOARD) ======
-window.submitQuickAllocation = async function (type) {
-    const prefix = type.toLowerCase();
-    const serial = document.getElementById(prefix + '-serial').value;
-    const empId = document.getElementById(prefix + '-emp-id').value;
-    const empName = document.getElementById(prefix + '-emp-name').value;
-    const assetName = document.getElementById(prefix + '-asset-name').value;
-    const assetSerial = document.getElementById(prefix + '-asset-serial').value;
-    const remark = document.getElementById(prefix + '-remark').value;
-
-    if (!serial || !empId || !empName) {
-        window.showAlert('Please fill all required fields (Serial Number, Employee ID, Employee Name)', 'error');
-        return;
-    }
-
-    const payload = {
-        deviceType: type,
-        serialNumber: serial,
-        employeeId: empId,
-        employeeName: empName,
-        assetName: assetName,
-        assetSerialNumber: assetSerial,
-        remark: remark
-    };
-
-    try {
-        const response = await fetch(API_URL + '/quick-allocations', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-
-        if (response.ok) {
-            window.showToast(type + ' allocated successfully!', 'success');
-            document.getElementById(prefix + '-assign-form').reset();
-        } else {
-            const data = await response.json();
-            window.showAlert(data.message || 'Failed to allocate', 'error');
-        }
-    } catch (err) {
-        window.showAlert('Cannot connect to server.', 'error');
-    }
-};
-
-
-window.openModal = function (id) { const modal = document.getElementById(id); if (modal) { modal.style.display = 'flex'; void modal.offsetWidth; modal.style.opacity = '1'; const content = modal.querySelector('.modal-content'); if (content) content.style.transform = 'scale(1)'; } };
-window.closeModal = function (id) { const modal = document.getElementById(id); if (modal) { modal.style.opacity = '0'; const content = modal.querySelector('.modal-content'); if (content) content.style.transform = 'scale(0.95)'; setTimeout(() => modal.style.display = 'none', 300); } };
-
 window.exportKpiData = function () {
     const data = window.currentKpiFilteredData;
     if (!data || data.length === 0) {
@@ -3006,9 +3101,7 @@ window.exportKpiData = function () {
         headers = ['SR No', 'Asset Tag', 'Serial/Key', 'Device Type', 'Make & Model', 'Purchase Date', 'Warranty End', 'Remark', 'Status', 'Assign Name', 'Employee ID'];
     }
 
-    let csvContent = "data:text/csv;charset=utf-8," + headers.join(",") + "\n";
-
-    data.forEach(item => {
+    const rows = data.map(item => {
         let row = [];
         if (window.currentKpiCategory === 'Allocations') {
             row = [
@@ -3042,81 +3135,13 @@ window.exportKpiData = function () {
                 item.employeeId || ''
             ];
         }
-
-        let rowStr = row.map(cell => {
-            let cellStr = String(cell).replace(/"/g, '""');
-            if (cellStr.includes(',') || cellStr.includes('\n') || cellStr.includes('"')) {
-                cellStr = '"' + cellStr + '"';
-            }
-            return cellStr;
-        }).join(",");
-
-        csvContent += rowStr + "\n";
+        return row;
     });
 
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
+    // Blob download: a data: URI would cut the file at the first "#" in any cell
     const filename = (window.currentKpiCategory || 'Export') + '_Assets_' + new Date().toISOString().split('T')[0] + '.csv';
-    link.setAttribute("download", filename);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadCsv(filename, headers, rows);
 };
-
-window.exportReportsToPDF = function () {
-    const data = window.currentReportsFilteredData;
-    if (!data || data.length === 0) {
-        if (window.showToast) window.showToast('No data available to export.', 'warning');
-        return;
-    }
-
-    if (!window.jspdf || !window.jspdf.jsPDF) {
-        if (window.showToast) window.showToast('PDF Library not loaded yet. Please wait a moment.', 'error');
-        return;
-    }
-
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ orientation: 'landscape' });
-
-    doc.setFontSize(18);
-    doc.setTextColor(15, 23, 42);
-    doc.text("Asset Inventory Report", 14, 22);
-
-    doc.setFontSize(11);
-    doc.setTextColor(100, 116, 139);
-    doc.text("Generated on: " + new Date().toLocaleString(), 14, 30);
-
-    const headers = [['SR No', 'Asset Tag', 'Serial/Key', 'Device Type', 'Make & Model', 'Assign Date', 'Valid Date', 'Remark', 'Status', 'Assign Name', 'Emp ID']];
-    const body = data.map(item => [
-        item.srNo || '-',
-        item.assetTagNumber || '-',
-        item.serialNumber || '-',
-        item.deviceType || '-',
-        (item.make || '') + ' ' + (item.model || ''),
-        item.purchaseDate ? new Date(item.purchaseDate).toLocaleDateString() : '-',
-        item.warrantyEndDate ? new Date(item.warrantyEndDate).toLocaleDateString() : '-',
-        item.remark || '-',
-        item.status || '-',
-        item.assignedToName || 'Unassigned',
-        item.employeeId || '-'
-    ]);
-
-    doc.autoTable({
-        head: headers,
-        body: body,
-        startY: 35,
-        theme: 'grid',
-        styles: { fontSize: 8, cellPadding: 3, textColor: [51, 65, 85] },
-        headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold' },
-        alternateRowStyles: { fillColor: [248, 250, 252] },
-        margin: { top: 35 }
-    });
-
-    const filename = 'Asset_Report_' + new Date().toISOString().split('T')[0] + '.pdf';
-    doc.save(filename);
-};
-
 
 window.exportReportsToPDF = function () {
     const data = window.currentReportsFilteredData;
