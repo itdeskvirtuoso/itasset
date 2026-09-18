@@ -68,18 +68,59 @@ async function seedDefaults() {
   console.log('✅ Super Admin account "admin" seeded. Remove ADMIN_INITIAL_PASSWORD from the environment now.');
 }
 
-if (MONGODB_URI) {
-  mongoose.connect(MONGODB_URI)
-    .then(async () => {
-      console.log('✅ Connected to MongoDB successfully');
-      try {
-        await seedDefaults();
-      } catch (err) {
-        console.error('Error seeding data:', err);
-      }
-    })
-    .catch((err) => console.error('❌ MongoDB connection error:', err.message));
+// One shared connection per server instance. On Vercel an instance can outlive a failed
+// connect, so a failure clears the cached promise and the next request tries again.
+let dbPromise = null;
+function connectDB() {
+  if (mongoose.connection.readyState === 1) return Promise.resolve();
+  if (!dbPromise) {
+    dbPromise = mongoose.connect(MONGODB_URI, { serverSelectionTimeoutMS: 8000 })
+      .then(async () => {
+        console.log('✅ Connected to MongoDB successfully');
+        try {
+          await seedDefaults();
+        } catch (err) {
+          console.error('Error seeding data:', err);
+        }
+      })
+      .catch((err) => {
+        dbPromise = null;
+        throw err;
+      });
+  }
+  return dbPromise;
 }
+
+if (MONGODB_URI) connectDB().catch((err) => console.error('❌ MongoDB connection error:', err.message));
+
+// Basic health check endpoint (also reports the database state, without any secrets)
+app.get('/api/health', async (req, res) => {
+  let database = 'not-configured';
+  if (MONGODB_URI) {
+    try {
+      await connectDB();
+      database = 'connected';
+    } catch (err) {
+      database = 'unreachable';
+    }
+  }
+  res.json({ status: 'ok', message: 'IT Asset Manager API is running', database });
+});
+
+// Every other API route needs the database: wait for it instead of letting queries hang,
+// and say clearly what is wrong when it can't be reached.
+app.use('/api', async (req, res, next) => {
+  if (!MONGODB_URI) {
+    return res.status(503).json({ message: 'Database is not configured on the server (MONGODB_URI missing). Contact the administrator.' });
+  }
+  try {
+    await connectDB();
+    next();
+  } catch (err) {
+    console.error('❌ MongoDB connection error:', err.message);
+    res.status(503).json({ message: 'Cannot reach the database right now. Please try again in a minute.' });
+  }
+});
 
 // Routes
 const authRoutes = require('./routes/auth');
@@ -97,11 +138,6 @@ app.use('/api/returns', returnRoutes);
 app.use('/api/roles', roleRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/profile', profileRoutes);
-
-// Basic health check endpoint
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', message: 'IT Asset Manager API is running' });
-});
 
 // Unknown API paths get a JSON 404 instead of the SPA's index.html
 app.use('/api', (req, res) => {
